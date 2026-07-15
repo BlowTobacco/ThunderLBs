@@ -1,0 +1,25 @@
+name: ThunderLBs
+version: '${version}'
+main: exposed.thunder.thunderLBs.ThunderLBs
+api-version: '1.21.7'
+folia-supported: true
+authors: [ thunderredstar ]
+website: https://docs.thunder.exposed
+softdepend:
+  - PlaceholderAPI
+  - Topper
+  - GroupTopper
+  - ajLeaderboards
+  - packetevents
+  - ViaVersion
+  - ViaBackwards
+commands:
+  leaderboards:
+    description: Manage ThunderLBs
+    usage: /<command> help
+    aliases: [lb]
+    permission: thunderlbs.admin
+permissions:
+  thunderlbs.admin:
+    description: Allows managing ThunderLBs
+    default: op

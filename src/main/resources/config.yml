@@ -1,0 +1,114 @@
+############################
+# ThunderLBs configuration #
+############################
+
+# How leaderboards are shown to players.
+#   packet: the default when PacketEvents is installed. These aren't spawned
+#           in the world itself and should mean less server thread usage.
+#   entity: real text display entities are spawned in the world. Use this only
+#           if packet mode doesn't work on your setup.
+# If packet is selected without PacketEvents installed, it'll fall back to entity mode.
+render:
+  mode: packet
+  # How close (in blocks) a player has to be to see a leaderboard.
+  # Can be overridden per board with /lb edit <id> viewdistance <blocks>.
+  view-distance: 48
+
+# Where leaderboard data comes from. Built in: topper, ajleaderboards.
+# Placeholder patterns and custom providers live in providers.yml.
+provider: topper
+
+missing-text: "---"
+# Position shown on the private relative line when the provider has no data for
+# the viewing player. Unlike normal positions, this is displayed without a #.
+missing-position: "-1"
+
+# Defaults applied to newly created leaderboards.
+defaults:
+  positions: 10
+  page-duration-ticks: 160
+  interval-ticks: 200
+  row-delay-ticks: 2
+  typing-interval-ticks: 1
+  row-spacing: 0.325
+  row-start-offset: -0.8
+  bar-offset-y: -0.5
+  relative-offset: -0.3
+  cleanup-on-start: true
+
+# The bar shown between the title and the rows.
+#   dots: one symbol per page. Pages that have already been shown use their
+#         holder color, upcoming ones use the pending color.
+#   bar:  a single line that fills up while the page is on screen.
+#   none: no bar.
+bar:
+  mode: dots
+  symbol: "⏺"
+  separator: " "
+  # Used for dots whose page has not been shown yet.
+  pending-color: "dark_gray"
+  # When false, shown dots (and the fill bar) use active-color instead of the
+  # holder color.
+  use-holder-color: true
+  active-color: "#FFFFFF"
+  # Only used when mode is "bar".
+  background: "<#4D4D4D><st>                    </st>"
+  foreground: "<#CFCFCF><st>                    </st>"
+
+formatting:
+  title: "<color:%color%>%icon%</color> <bold><color:%color%>%title%</color></bold>"
+  row: "<color:%color%>%position%</color> <white>%player%</white> <dark_gray>→</dark_gray> <color:%color%>%value%</color>"
+  relative: "<color:%color%>%position%</color> <white>%player%</white> <dark_gray>→</dark_gray> <color:%color%>%value%</color>"
+  circled-numbers:
+    - "①"
+    - "②"
+    - "③"
+    - "④"
+    - "⑤"
+    - "⑥"
+    - "⑦"
+    - "⑧"
+    - "⑨"
+    - "⑩"
+
+sounds:
+  # Sound that plays during the "typing" animation on each board page's title.
+  typing:
+    enabled: true
+    key: "minecraft:block.note_block.hat"
+    volume: 0.5
+    pitch-min: 1.85
+    pitch-max: 2.0
+    radius: 16
+
+# Animation configurations. You most likely don't need to touch these.
+# https://easings.net/ if you do really want to...
+animation:
+  title:
+    in:
+      frames: 20
+      easing: "EASE_OUT_BACK"
+      scale: 1.5
+      overshoot: 4.5
+    out:
+      frames: 20
+      easing: "EASE_IN_SINE"
+      scale: 1.5
+  row:
+    in:
+      frames: 20
+      easing: "EASE_OUT_CUBIC"
+      start-offset: -1.25
+      distance: 1.25
+    out:
+      frames: 20
+      easing: "EASE_IN_CUBIC"
+      distance: 1.25
+  bar:
+    frames: 10
+    easing: "LINEAR"
+    translation-start: -1.0
+    translation-end: 0.0
+
+debug:
+  placeholders: false

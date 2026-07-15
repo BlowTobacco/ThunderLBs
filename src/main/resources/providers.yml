@@ -1,0 +1,34 @@
+#########################
+# ThunderLBs providers  #
+#########################
+
+# PlaceholderAPI patterns may use %holder% and %position%. Select the active
+# provider with the "provider" option in config.yml.
+
+# Topper (https://modrinth.com/plugin/topper-lb)
+topper:
+  name: "%topper_%holder%;top_name;%position%%"
+  value: "%topper_%holder%;top_value_raw;%position%%"
+  viewer-rank: "%topper_%holder%;top_rank%"
+  viewer-value: "%topper_%holder%;value_raw%"
+  # GroupTopper (https://www.spigotmc.org/resources/grouptopper-now-with-ajleaderboards-xleaderboards-support.124971/)
+  group-name: "%grouptopper_%holder%;top_name;%position%%"
+  group-value: "%grouptopper_%holder%;top_value_raw;%position%%"
+  group-viewer-rank: "%grouptopper_%holder%;top_rank%"
+  group-viewer-value: "%grouptopper_%holder%;value_raw%"
+  group-team: "%topper_team%"
+
+# AJLeaderboards (https://modrinth.com/plugin/ajleaderboards)
+ajleaderboards:
+  name: "%ajlb_lb_%holder%_%position%_alltime_name%"
+  value: "%ajlb_lb_%holder%_%position%_alltime_rawvalue%"
+  viewer-rank: "%ajlb_position_%holder%_alltime%"
+  viewer-value: "%ajlb_value_%holder%_alltime_raw%"
+
+# You can integrate your own providers, at the minimum you need the four fields below.
+# Once you've set it up here, go to config.yml and set the "provider" field!
+examplelbprovider:
+  name: "%examplelb_%holder%_%position%_name%"
+  value: "%examplelb_%holder%_%position%_value%"
+  viewer-rank: "%examplelb_%holder%_rank%"
+  viewer-value: "%examplelb_%holder%_value%"

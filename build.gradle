@@ -1,0 +1,95 @@
+plugins {
+    id 'java'
+    id 'com.gradleup.shadow' version '9.5.1'
+    id 'xyz.jpenilla.run-paper' version '3.0.2'
+}
+
+group = 'exposed.thunder'
+version = '1.0.0'
+
+repositories {
+    mavenCentral()
+    maven {
+        name = 'papermc'
+        url = 'https://repo.papermc.io/repository/maven-public/'
+    }
+    maven {
+        name = 'placeholderapi'
+        url = 'https://repo.extendedclip.com/content/repositories/placeholderapi/'
+    }
+    maven {
+        name = 'codemc'
+        url = 'https://repo.codemc.io/repository/maven-releases/'
+    }
+}
+
+dependencies {
+    implementation('org.bstats:bstats-bukkit:3.2.1')
+
+    compileOnly('io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT')
+    compileOnly('me.clip:placeholderapi:2.12.3')
+    compileOnly('com.github.retrooper:packetevents-spigot:2.13.0')
+
+    testImplementation(platform('org.junit:junit-bom:5.13.4'))
+    testImplementation('org.junit.jupiter:junit-jupiter')
+    testRuntimeOnly('org.junit.platform:junit-platform-launcher')
+    testImplementation('io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT')
+}
+
+test {
+    useJUnitPlatform()
+}
+
+tasks {
+    runServer {
+        minecraftVersion('1.21.8')
+    }
+}
+
+jar {
+    archiveClassifier = 'unshaded'
+}
+
+shadowJar {
+    archiveClassifier = ''
+    exclude 'module-info.class'
+    relocate 'org.bstats', 'exposed.thunder.thunderLBs.libs.bstats'
+}
+
+build.dependsOn shadowJar
+
+def targetJavaVersion = 21
+java {
+    def javaVersion = JavaVersion.toVersion(targetJavaVersion)
+    sourceCompatibility = javaVersion
+    targetCompatibility = javaVersion
+    if (JavaVersion.current() < javaVersion) {
+        toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+
+    if (targetJavaVersion >= 10 || JavaVersion.current().isJava10Compatible()) {
+        options.release.set(targetJavaVersion)
+    }
+}
+
+processResources {
+    def props = [version: version]
+    inputs.properties props
+    filteringCharset 'UTF-8'
+
+    from(rootProject.file('LICENSE.md')) {
+        into 'META-INF'
+        rename { 'THUNDERLBS-LICENSE.md' }
+    }
+    from(rootProject.file('THIRD_PARTY_NOTICES.md')) {
+        into 'META-INF'
+    }
+
+    filesMatching('plugin.yml') {
+        expand props
+    }
+}

@@ -1,0 +1,37 @@
+# Gradle / Java build output
+.gradle/
+build/
+bin/
+out/
+*.class
+*.log
+hs_err_pid*
+replay_pid*
+
+# IDE and local assistant state
+.idea/
+.vscode/
+.claude/
+.github/java-upgrade/
+.github/modernize/
+*.iml
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pem
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local development servers and external source trees
+run/
+pe-*/
+marketing/
+bbb-test-server/

@@ -1,0 +1,24 @@
+########################
+# ThunderLBs messages  #
+########################
+
+# Classic & color codes and &#RRGGBB hex colors are supported. Set a message to "" to hide it.
+# ThunderLBs' theme color is electric sky blue (#38BDF8).
+prefix: "&#38BDF8ThunderLBs &8» &7"
+created: "Created leaderboard &f%id% &7at &f%location%&7."
+deleted: "Deleted leaderboard &f%id%&7."
+exists: "&cLeaderboard &f%id% &calready exists."
+missing: "&cLeaderboard &f%id% &cdoes not exist."
+reloaded: "Reloaded leaderboard &f%id%&7."
+reloaded-all: "Reloaded ThunderLBs configuration and leaderboards."
+list-header: "Loaded leaderboards (&f%count%&7):"
+list-entry: "  &8- &f%id% &7at &f%location% &8| &7pages: &f%pages%&7, positions: &f%positions%&7, enabled: &f%enabled%"
+not-player: "&cYou must be in-game to run this command."
+saved: "Updated leaderboard &f%id%&7."
+created-file: "Generated configuration at &f%path%&7."
+teleported: "Teleported to leaderboard &f%id%&7."
+moved: "Moved leaderboard &f%id% &7to &f%location%&7."
+debug-placeholder-enabled: "Placeholder debug &fenabled&7."
+debug-placeholder-disabled: "Placeholder debug &fdisabled&7."
+debug-placeholder-status: "Placeholder debug is currently &f%state%&7."
+debug-placeholder-usage: "&cUsage: /%label% debug placeholders <on|off|toggle>"
