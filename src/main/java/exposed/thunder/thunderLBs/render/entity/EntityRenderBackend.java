@@ -6,6 +6,7 @@ import exposed.thunder.thunderLBs.render.BoardDisplay;
 import exposed.thunder.thunderLBs.render.DisplayOptions;
 import exposed.thunder.thunderLBs.render.RenderBackend;
 import exposed.thunder.thunderLBs.scheduler.RegionTaskScheduler;
+import exposed.thunder.thunderLBs.util.VersionSupport;
 import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -22,7 +23,7 @@ public final class EntityRenderBackend implements RenderBackend {
 
     public EntityRenderBackend(ThunderLBs plugin) {
         this.plugin = plugin;
-        this.scheduler = new RegionTaskScheduler(plugin);
+        this.scheduler = RegionTaskScheduler.create(plugin);
     }
 
     @Override
@@ -62,7 +63,9 @@ public final class EntityRenderBackend implements RenderBackend {
             display.setTextOpacity(options.opacity());
             display.setInterpolationDelay(0);
             display.setInterpolationDuration(options.interpolationDuration());
-            display.setTeleportDuration(options.teleportDuration());
+            if (VersionSupport.teleportDurationSupported()) {
+                display.setTeleportDuration(options.teleportDuration());
+            }
             display.setTransformation(new Transformation(
                     new Vector3f(options.translation()),
                     new Quaternionf(),

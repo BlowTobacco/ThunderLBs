@@ -13,6 +13,7 @@ import exposed.thunder.thunderLBs.leaderboard.LeaderboardType;
 import exposed.thunder.thunderLBs.leaderboard.ValueFormat;
 import exposed.thunder.thunderLBs.leaderboard.ValidationIssue;
 import exposed.thunder.thunderLBs.util.FormattingUtil;
+import exposed.thunder.thunderLBs.util.VersionSupport;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.event.HoverEvent;
@@ -67,12 +68,27 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
 
     private final ThunderLBs plugin;
     private final LeaderboardManager manager;
-    private final LeaderboardEditDialogs editDialogs;
+    private final LeaderboardEditor editDialogs;
 
     public LeaderboardsCommand(ThunderLBs plugin, LeaderboardManager manager) {
         this.plugin = plugin;
         this.manager = manager;
-        this.editDialogs = new LeaderboardEditDialogs(plugin, manager);
+        this.editDialogs = createEditor(plugin, manager);
+    }
+
+    private static LeaderboardEditor createEditor(ThunderLBs plugin, LeaderboardManager manager) {
+        if (!VersionSupport.dialogsSupported()) {
+            return null;
+        }
+        try {
+            return (LeaderboardEditor) Class.forName("exposed.thunder.thunderLBs.commands.LeaderboardEditDialogs")
+                    .getConstructor(ThunderLBs.class, LeaderboardManager.class)
+                    .newInstance(plugin, manager);
+        } catch (ReflectiveOperationException e) {
+            plugin.getLogger().log(java.util.logging.Level.WARNING,
+                    "Could not initialize the dialog editor; falling back to chat-based editing.", e);
+            return null;
+        }
     }
 
     @Override
@@ -330,7 +346,7 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
             return;
         }
         LeaderboardDefinition definition = board.definition();
-        LeaderboardPage page = definition.pages().getFirst();
+        LeaderboardPage page = definition.pages().get(0);
         exposed.thunder.thunderLBs.config.PluginConfig.Provider provider = plugin.getPluginConfig().provider();
         String namePattern = definition.type() == LeaderboardType.GROUP ? provider.groupName() : provider.name();
         String valuePattern = definition.type() == LeaderboardType.GROUP ? provider.groupValue() : provider.value();
@@ -373,7 +389,7 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
         }
         target.setYaw(player.getLocation().getYaw());
         target.setPitch(player.getLocation().getPitch());
-        player.teleportAsync(target).thenAccept(success -> player.getScheduler().execute(plugin, () -> {
+        player.teleportAsync(target).thenAccept(success -> plugin.taskScheduler().executeDelayed(player, () -> {
                     if (!success) {
                         sendPrefixed(player, "&cCould not teleport to that leaderboard.");
                         return;
@@ -511,10 +527,18 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
     private void handleEdit(CommandSender sender, String label, String[] args) {
         if (args.length < 3) {
             if (sender instanceof Player player) {
-                if (args.length == 1) {
-                    editDialogs.openSelector(player);
-                } else if (args[1].equalsIgnoreCase("help")) {
+                if (args.length > 1 && args[1].equalsIgnoreCase("help")) {
                     sendEditUsage(sender, label);
+                } else if (editDialogs == null) {
+                    String message = plugin.getPluginConfig().prefixedMessage("editor-unsupported", null);
+                    if (message.isEmpty()) {
+                        message = plugin.getPluginConfig().messages().prefix()
+                                + "The dialog editor needs Minecraft 1.21.7+ — inventory editor coming soon :)";
+                    }
+                    send(player, message);
+                    sendEditUsage(sender, label);
+                } else if (args.length == 1) {
+                    editDialogs.openSelector(player);
                 } else {
                     editDialogs.openBoard(player, args[1]);
                 }

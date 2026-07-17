@@ -11,6 +11,7 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEn
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnEntity;
 import exposed.thunder.thunderLBs.render.BoardDisplay;
 import exposed.thunder.thunderLBs.render.DisplayOptions;
+import exposed.thunder.thunderLBs.util.VersionSupport;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
 import org.bukkit.entity.Display;
@@ -25,19 +26,22 @@ final class PacketBoardDisplay implements BoardDisplay {
     private static final int BRIGHTNESS_FULL = (15 << 4) | (15 << 20);
     private static final int BACKGROUND_TRANSPARENT = 0;
 
+    private static final boolean TELEPORT_DURATION_METADATA = VersionSupport.teleportDurationSupported();
+    private static final int SHIFT = TELEPORT_DURATION_METADATA ? 1 : 0;
+
     private static final int INDEX_INTERPOLATION_DELAY = 8;
     private static final int INDEX_INTERPOLATION_DURATION = 9;
     private static final int INDEX_TELEPORT_DURATION = 10;
-    private static final int INDEX_TRANSLATION = 11;
-    private static final int INDEX_SCALE = 12;
-    private static final int INDEX_BILLBOARD = 15;
-    private static final int INDEX_BRIGHTNESS = 16;
-    private static final int INDEX_VIEW_RANGE = 17;
-    private static final int INDEX_TEXT = 23;
-    private static final int INDEX_LINE_WIDTH = 24;
-    private static final int INDEX_BACKGROUND = 25;
-    private static final int INDEX_OPACITY = 26;
-    private static final int INDEX_FLAGS = 27;
+    private static final int INDEX_TRANSLATION = 10 + SHIFT;
+    private static final int INDEX_SCALE = 11 + SHIFT;
+    private static final int INDEX_BILLBOARD = 14 + SHIFT;
+    private static final int INDEX_BRIGHTNESS = 15 + SHIFT;
+    private static final int INDEX_VIEW_RANGE = 16 + SHIFT;
+    private static final int INDEX_TEXT = 22 + SHIFT;
+    private static final int INDEX_LINE_WIDTH = 23 + SHIFT;
+    private static final int INDEX_BACKGROUND = 24 + SHIFT;
+    private static final int INDEX_OPACITY = 25 + SHIFT;
+    private static final int INDEX_FLAGS = 26 + SHIFT;
 
     private final PacketRenderBackend backend;
     private final int entityId;
@@ -164,7 +168,9 @@ final class PacketBoardDisplay implements BoardDisplay {
         List<EntityData<?>> data = new ArrayList<>(13);
         data.add(new EntityData<>(INDEX_INTERPOLATION_DELAY, EntityDataTypes.INT, 0));
         data.add(new EntityData<>(INDEX_INTERPOLATION_DURATION, EntityDataTypes.INT, interpolationDuration));
-        data.add(new EntityData<>(INDEX_TELEPORT_DURATION, EntityDataTypes.INT, teleportDuration));
+        if (TELEPORT_DURATION_METADATA) {
+            data.add(new EntityData<>(INDEX_TELEPORT_DURATION, EntityDataTypes.INT, teleportDuration));
+        }
         data.add(new EntityData<>(INDEX_TRANSLATION, EntityDataTypes.VECTOR3F, packetVector(translation)));
         data.add(new EntityData<>(INDEX_SCALE, EntityDataTypes.VECTOR3F, packetVector(scale)));
         data.add(new EntityData<>(INDEX_BILLBOARD, EntityDataTypes.BYTE, billboardValue));

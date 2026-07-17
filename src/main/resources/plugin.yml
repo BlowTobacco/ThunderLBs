@@ -1,7 +1,7 @@
 name: ThunderLBs
 version: '${version}'
 main: exposed.thunder.thunderLBs.ThunderLBs
-api-version: '1.21.7'
+api-version: '1.19'
 folia-supported: true
 authors: [ thunderredstar ]
 website: https://docs.thunder.exposed

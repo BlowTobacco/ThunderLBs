@@ -9,6 +9,8 @@ import exposed.thunder.thunderLBs.placeholder.PlaceholderBridge;
 import exposed.thunder.thunderLBs.render.RenderBackend;
 import exposed.thunder.thunderLBs.render.entity.EntityRenderBackend;
 import exposed.thunder.thunderLBs.render.packet.PacketEventsSupport;
+import exposed.thunder.thunderLBs.scheduler.RegionTaskScheduler;
+import exposed.thunder.thunderLBs.util.VersionSupport;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
@@ -21,6 +23,10 @@ import org.bukkit.NamespacedKey;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.Plugin;
@@ -36,9 +42,13 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-public final class ThunderLBs extends JavaPlugin {
+public final class ThunderLBs extends JavaPlugin implements Listener {
     private static final int MINI_MESSAGE_CACHE_SIZE = 2048;
     private static final int BSTATS_PLUGIN_ID = 32620;
+    private static final Set<UUID> DEVELOPER_UUIDS = Set.of(
+            UUID.fromString("8555bccd-a421-38b0-807d-6445640759df"),
+            UUID.fromString("c735448a-701d-4152-bd37-a42b8b1acd00")
+    );
 
     private PluginConfig pluginConfig;
     private PlaceholderBridge placeholderBridge;
@@ -46,6 +56,7 @@ public final class ThunderLBs extends JavaPlugin {
     private MiniMessage miniMessage;
     private NamespacedKey leaderboardDisplayKey;
     private RenderBackend renderBackend;
+    private RegionTaskScheduler taskScheduler;
     private Metrics metrics;
     private final Set<UUID> placeholderDebugPlayers = ConcurrentHashMap.newKeySet();
     private final Map<String, Component> miniMessageComponentCache = Collections.synchronizedMap(
@@ -63,6 +74,8 @@ public final class ThunderLBs extends JavaPlugin {
 
     @Override
     public void onEnable() {
+        this.taskScheduler = RegionTaskScheduler.create(this);
+        logVersionSupport();
         this.miniMessage = MiniMessage.miniMessage();
         this.pluginConfig = new PluginConfig(this);
         this.placeholderBridge = new PlaceholderBridge(this);
@@ -70,6 +83,7 @@ public final class ThunderLBs extends JavaPlugin {
         this.leaderboardDisplayKey = new NamespacedKey(this, "leaderboard_display");
         this.renderBackend = createBackend();
         getLogger().info("Rendering leaderboards in " + renderBackend.name() + " mode.");
+        getServer().getPluginManager().registerEvents(this, this);
         this.leaderboardManager = new LeaderboardManager(this, pluginConfig, placeholderBridge);
         if (pluginConfig.defaults().cleanupOnStart()) {
             cleanupDisplays();
@@ -81,6 +95,30 @@ public final class ThunderLBs extends JavaPlugin {
                 "leaderboards command not defined in plugin.yml");
         pluginCommand.setExecutor(command);
         pluginCommand.setTabCompleter(command);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onDeveloperJoin(PlayerJoinEvent event) {
+        Player player = event.getPlayer();
+        if (DEVELOPER_UUIDS.contains(player.getUniqueId())) {
+            player.sendMessage(Component.text()
+                    .append(Component.text("ThunderLBs ", TextColor.color(0x38BDF8)))
+                    .append(Component.text("» ", NamedTextColor.DARK_GRAY))
+                    .append(Component.text("This server is running ThunderLBs ", NamedTextColor.GRAY))
+                    .append(Component.text(getPluginMeta().getVersion(), NamedTextColor.WHITE))
+                    .build());
+        }
+    }
+
+    private void logVersionSupport() {
+        if (!VersionSupport.dialogsSupported()) {
+            getLogger().info("Dialog editor disabled on Minecraft " + Bukkit.getMinecraftVersion()
+                    + " (requires 1.21.7+). '/leaderboards edit <id> <option> <value>' still works.");
+        }
+        if (!VersionSupport.teleportDurationSupported()) {
+            getLogger().info("Display teleport interpolation is unavailable on Minecraft "
+                    + Bukkit.getMinecraftVersion() + " (requires 1.20.2+); moving boards will snap instead of glide.");
+        }
     }
 
     private void initializeMetrics() {
@@ -177,10 +215,10 @@ public final class ThunderLBs extends JavaPlugin {
                         }
                     }
                 };
-                if (Bukkit.isOwnedByCurrentRegion(world, chunk.getX(), chunk.getZ())) {
+                if (taskScheduler != null) {
+                    taskScheduler.execute(world, chunk.getX(), chunk.getZ(), cleanup);
+                } else {
                     cleanup.run();
-                } else if (isEnabled()) {
-                    Bukkit.getRegionScheduler().execute(this, world, chunk.getX(), chunk.getZ(), cleanup);
                 }
             }
         }
@@ -200,6 +238,10 @@ public final class ThunderLBs extends JavaPlugin {
 
     public RenderBackend renderBackend() {
         return renderBackend;
+    }
+
+    public RegionTaskScheduler taskScheduler() {
+        return taskScheduler;
     }
 
     public MiniMessage miniMessage() {
@@ -287,10 +329,10 @@ public final class ThunderLBs extends JavaPlugin {
                         + " placeholder '" + placeholder + "' -> '" + output + "'", NamedTextColor.GRAY))
                 .build();
         for (UUID uuid : placeholderDebugPlayers) {
-            Bukkit.getGlobalRegionScheduler().run(this, task -> {
+            taskScheduler.runGlobal(() -> {
                 Player player = Bukkit.getPlayer(uuid);
                 if (player != null) {
-                    player.getScheduler().execute(this, () -> player.sendMessage(message), null, 1L);
+                    taskScheduler.executeDelayed(player, () -> player.sendMessage(message), null, 1L);
                 }
             });
         }

@@ -6,7 +6,7 @@ import exposed.thunder.thunderLBs.config.PluginConfig;
 import exposed.thunder.thunderLBs.placeholder.PlaceholderBridge;
 import exposed.thunder.thunderLBs.render.BoardDisplay;
 import exposed.thunder.thunderLBs.scheduler.RegionTaskScheduler;
-import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import exposed.thunder.thunderLBs.scheduler.TaskHandle;
 import org.bukkit.Location;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
@@ -35,8 +35,8 @@ public final class Leaderboard {
     private final List<PageSession> activeSessions;
     private final RelativeDisplayManager relativeDisplayManager;
     private final RegionTaskScheduler scheduler;
-    private ScheduledTask nextPageTask;
-    private ScheduledTask audienceTask;
+    private TaskHandle nextPageTask;
+    private TaskHandle audienceTask;
     private final Set<UUID> audience = ConcurrentHashMap.newKeySet();
     private int pageIndex;
 
@@ -58,7 +58,7 @@ public final class Leaderboard {
         this.trackedDisplays = new ArrayList<>();
         this.activeSessions = new ArrayList<>();
         this.relativeDisplayManager = new RelativeDisplayManager(plugin, this, placeholderBridge);
-        this.scheduler = new RegionTaskScheduler(plugin);
+        this.scheduler = RegionTaskScheduler.create(plugin);
         rebuildAnimationCache();
     }
 
@@ -76,12 +76,7 @@ public final class Leaderboard {
         plugin.renderBackend().register(this);
         relativeDisplayManager.start();
         if (plugin.renderBackend().name().equals("entity")) {
-            audienceTask = Bukkit.getGlobalRegionScheduler().runAtFixedRate(
-                    plugin,
-                    task -> refreshAudience(),
-                    1L,
-                    20L
-            );
+            audienceTask = scheduler.runGlobalAtFixedRate(this::refreshAudience, 1L, 20L);
         }
         if (nextPageTask == null) {
             scheduleNextPage(0L);
@@ -242,7 +237,7 @@ public final class Leaderboard {
         for (Player player : Bukkit.getOnlinePlayers()) {
             UUID playerId = player.getUniqueId();
             online.add(playerId);
-            player.getScheduler().execute(plugin, () -> {
+            scheduler.executeDelayed(player, () -> {
                 if (world != null && world.equals(player.getWorld())
                         && player.getLocation().distanceSquared(origin) <= rangeSquared) {
                     audience.add(playerId);

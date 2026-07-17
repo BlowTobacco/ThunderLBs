@@ -1,76 +1,39 @@
 package exposed.thunder.thunderLBs.scheduler;
 
-import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
-import org.bukkit.Bukkit;
+import exposed.thunder.thunderLBs.util.VersionSupport;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
 import org.bukkit.plugin.Plugin;
 
-import java.util.Objects;
 import java.util.function.Consumer;
 
-/**
- * Small adapter around Paper's region scheduler. Paper implements this API on
- * traditional servers too, which lets the rest of the plugin use one scheduling
- * model on both Paper and Folia.
- */
-public final class RegionTaskScheduler {
-    private final Plugin plugin;
+// folia 1.20.1 added region schedulers but this didn't exist before so we have to hack around for 1.19.4-1.20
+public interface RegionTaskScheduler {
 
-    public RegionTaskScheduler(Plugin plugin) {
-        this.plugin = Objects.requireNonNull(plugin, "plugin");
-    }
-
-    public void execute(Location location, Runnable action) {
-        Location anchor = requireWorld(location);
-        if (Bukkit.isOwnedByCurrentRegion(anchor)) {
-            action.run();
-            return;
+    static RegionTaskScheduler create(Plugin plugin) {
+        if (VersionSupport.foliaSchedulersAvailable()) {
+            return new FoliaTaskScheduler(plugin);
         }
-        if (!plugin.isEnabled()) {
-            return;
-        }
-        Bukkit.getRegionScheduler().execute(plugin, anchor, action);
+        return new BukkitTaskScheduler(plugin);
     }
 
-    public ScheduledTask run(Location location, Consumer<ScheduledTask> action) {
-        return Bukkit.getRegionScheduler().run(plugin, requireWorld(location), action);
-    }
+    void execute(Location location, Runnable action);
 
-    public ScheduledTask runDelayed(Location location, Consumer<ScheduledTask> action, long delayTicks) {
-        Location anchor = requireWorld(location);
-        if (delayTicks <= 0L) {
-            return Bukkit.getRegionScheduler().run(plugin, anchor, action);
-        }
-        return Bukkit.getRegionScheduler().runDelayed(plugin, anchor, action, delayTicks);
-    }
+    TaskHandle run(Location location, Consumer<TaskHandle> action);
 
-    public ScheduledTask runAtFixedRate(Location location, Consumer<ScheduledTask> action,
-                                        long initialDelayTicks, long periodTicks) {
-        return Bukkit.getRegionScheduler().runAtFixedRate(
-                plugin,
-                requireWorld(location),
-                action,
-                Math.max(1L, initialDelayTicks),
-                Math.max(1L, periodTicks)
-        );
-    }
+    TaskHandle runDelayed(Location location, Consumer<TaskHandle> action, long delayTicks);
 
-    public void execute(Entity entity, Runnable action, Runnable retired) {
-        if (Bukkit.isOwnedByCurrentRegion(entity)) {
-            action.run();
-            return;
-        }
-        if (!plugin.isEnabled()) {
-            return;
-        }
-        entity.getScheduler().execute(plugin, action, retired, 1L);
-    }
+    TaskHandle runAtFixedRate(Location location, Consumer<TaskHandle> action,
+                              long initialDelayTicks, long periodTicks);
 
-    private static Location requireWorld(Location location) {
-        Objects.requireNonNull(location, "location");
-        World world = Objects.requireNonNull(location.getWorld(), "location world");
-        return new Location(world, location.getX(), location.getY(), location.getZ());
-    }
+    void execute(World world, int chunkX, int chunkZ, Runnable action);
+
+    void execute(Entity entity, Runnable action, Runnable retired);
+
+    void executeDelayed(Entity entity, Runnable action, Runnable retired, long delayTicks);
+
+    void runGlobal(Runnable action);
+
+    TaskHandle runGlobalAtFixedRate(Runnable action, long initialDelayTicks, long periodTicks);
 }

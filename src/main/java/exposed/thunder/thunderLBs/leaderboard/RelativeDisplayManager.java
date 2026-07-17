@@ -6,7 +6,7 @@ import exposed.thunder.thunderLBs.placeholder.PlaceholderBridge;
 import exposed.thunder.thunderLBs.render.BoardDisplay;
 import exposed.thunder.thunderLBs.render.DisplayOptions;
 import exposed.thunder.thunderLBs.scheduler.RegionTaskScheduler;
-import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import exposed.thunder.thunderLBs.scheduler.TaskHandle;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -39,11 +39,11 @@ public final class RelativeDisplayManager {
     private final double rangeSquared;
     private final Map<UUID, BoardDisplay> playerDisplays = new HashMap<>();
     private final Map<UUID, String> lastRenderedContent = new HashMap<>();
-    private final List<ScheduledTask> animationTasks = new ArrayList<>();
+    private final List<TaskHandle> animationTasks = new ArrayList<>();
     private final RegionTaskScheduler scheduler;
     private volatile LeaderboardPage activePage;
     private volatile ContentContext contentContext;
-    private ScheduledTask refreshTask;
+    private TaskHandle refreshTask;
     private float animationOffset;
     private byte animationOpacity = packOpacity(OPACITY_TRANSPARENT);
     private boolean pageExitComplete;
@@ -58,7 +58,7 @@ public final class RelativeDisplayManager {
         this.world = leaderboard.world();
         this.displayLocation = calculateLocation(definition);
         this.rangeSquared = leaderboard.rangeSquared();
-        this.scheduler = new RegionTaskScheduler(plugin);
+        this.scheduler = RegionTaskScheduler.create(plugin);
     }
 
     public void start() {
@@ -66,12 +66,7 @@ public final class RelativeDisplayManager {
         if (!definition.settings().showRelativePosition()) {
             return;
         }
-        refreshTask = Bukkit.getGlobalRegionScheduler().runAtFixedRate(
-                plugin,
-                task -> refreshPlayers(),
-                REFRESH_TICKS,
-                REFRESH_TICKS
-        );
+        refreshTask = scheduler.runGlobalAtFixedRate(this::refreshPlayers, REFRESH_TICKS, REFRESH_TICKS);
         refresh();
     }
 
@@ -92,7 +87,7 @@ public final class RelativeDisplayManager {
     }
 
     private void cancelAnimationTasks() {
-        for (ScheduledTask task : animationTasks) {
+        for (TaskHandle task : animationTasks) {
             if (task != null && !task.isCancelled()) {
                 task.cancel();
             }
@@ -135,11 +130,11 @@ public final class RelativeDisplayManager {
         float initialOffset = offsets.length == 0 ? 0.0F : offsets[0];
         applyAnimationState(initialOffset, packOpacity(OPACITY_TRANSPARENT));
 
-        ScheduledTask entrance = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
+        TaskHandle entrance = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
             private int frame;
 
             @Override
-            public void accept(ScheduledTask task) {
+            public void accept(TaskHandle task) {
                 if (frame >= offsets.length) {
                     task.cancel();
                     float finalOffset = offsets.length == 0 ? 0.0F : offsets[offsets.length - 1];
@@ -160,11 +155,11 @@ public final class RelativeDisplayManager {
     private void schedulePageExit() {
         float[] offsets = leaderboard.animationCache().rowOutOffsets();
         long delay = Math.max(1L, leaderboard.definition().settings().pageDurationTicks());
-        ScheduledTask exit = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
+        TaskHandle exit = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
             private int frame;
 
             @Override
-            public void accept(ScheduledTask task) {
+            public void accept(TaskHandle task) {
                 if (frame >= offsets.length) {
                     task.cancel();
                     float finalOffset = offsets.length == 0 ? 0.0F : offsets[offsets.length - 1];
@@ -220,14 +215,14 @@ public final class RelativeDisplayManager {
             return;
         }
 
-        Bukkit.getGlobalRegionScheduler().run(plugin, task -> refreshPlayers());
+        scheduler.runGlobal(this::refreshPlayers);
     }
 
     private void refreshPlayers() {
         Set<UUID> online = new HashSet<>();
         for (Player player : Bukkit.getOnlinePlayers()) {
             online.add(player.getUniqueId());
-            player.getScheduler().execute(plugin, () -> refreshOnPlayer(player), null, 1L);
+            scheduler.executeDelayed(player, () -> refreshOnPlayer(player), null, 1L);
         }
         scheduler.execute(origin, () -> removeOfflineDisplays(online));
     }

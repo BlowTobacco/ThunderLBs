@@ -8,7 +8,7 @@ import exposed.thunder.thunderLBs.render.BoardDisplay;
 import exposed.thunder.thunderLBs.render.DisplayOptions;
 import exposed.thunder.thunderLBs.render.RenderBackend;
 import exposed.thunder.thunderLBs.scheduler.RegionTaskScheduler;
-import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import exposed.thunder.thunderLBs.scheduler.TaskHandle;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -52,7 +52,7 @@ final class PageSession {
     private final boolean debugPlaceholders;
 
     private final List<BoardDisplay> displays;
-    private final List<ScheduledTask> tasks;
+    private final List<TaskHandle> tasks;
     private final RegionTaskScheduler scheduler;
     private boolean active;
     private boolean completed;
@@ -82,7 +82,7 @@ final class PageSession {
         this.world = leaderboard.world();
         this.displays = new ArrayList<>();
         this.tasks = new ArrayList<>();
-        this.scheduler = new RegionTaskScheduler(plugin);
+        this.scheduler = RegionTaskScheduler.create(plugin);
         this.completed = false;
         this.liveDisplays = 0;
         this.billboard = definition.billboard();
@@ -118,7 +118,7 @@ final class PageSession {
             return;
         }
         this.active = false;
-        for (ScheduledTask task : tasks) {
+        for (TaskHandle task : tasks) {
             if (task != null && !task.isCancelled()) {
                 task.cancel();
             }
@@ -234,11 +234,11 @@ final class PageSession {
         PluginConfig.Sounds.Typing typing = config.sounds().typing();
         Location base = origin;
         List<Component> characters = toPartialComponents(fullTitle);
-        ScheduledTask task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
+        TaskHandle task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
             int index = 0;
 
             @Override
-            public void accept(ScheduledTask task) {
+            public void accept(TaskHandle task) {
                 if (!ensureSessionActive() || display.isRemoved()) {
                     task.cancel();
                     return;
@@ -279,9 +279,9 @@ final class PageSession {
         if (world == null) {
             return;
         }
-        Bukkit.getGlobalRegionScheduler().run(plugin, task -> {
+        scheduler.runGlobal(() -> {
             for (org.bukkit.entity.Player player : Bukkit.getOnlinePlayers()) {
-                player.getScheduler().execute(plugin, () -> {
+                scheduler.executeDelayed(player, () -> {
                     if (!world.equals(player.getWorld())
                             || player.getLocation().distanceSquared(base) > radius * radius) {
                         return;
@@ -296,11 +296,11 @@ final class PageSession {
 
     private void scheduleTitleAnimations(BoardDisplay display) {
         float[] frames = animationCache.titleInScale();
-        ScheduledTask task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
+        TaskHandle task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
             int frame = 0;
 
             @Override
-            public void accept(ScheduledTask task) {
+            public void accept(TaskHandle task) {
                 if (!ensureSessionActive() || display.isRemoved()) {
                     task.cancel();
                     return;
@@ -322,11 +322,11 @@ final class PageSession {
     private void scheduleTitleFade(BoardDisplay display) {
         long delay = Math.max(1L, definition.settings().pageDurationTicks());
         float[] frames = animationCache.titleOutScale();
-        ScheduledTask task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
+        TaskHandle task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
             int frame = 0;
 
             @Override
-            public void accept(ScheduledTask task) {
+            public void accept(TaskHandle task) {
                 if (!ensureSessionActive() || display.isRemoved()) {
                     task.cancel();
                     return;
@@ -430,7 +430,7 @@ final class PageSession {
         container.opacity(packOpacity(OPACITY_OPAQUE));
         value.opacity(packOpacity(OPACITY_TRANSPARENT));
 
-        ScheduledTask fadeIn = scheduler.runDelayed(origin, task -> {
+        TaskHandle fadeIn = scheduler.runDelayed(origin, task -> {
                 if (!ensureSessionActive() || container.isRemoved() || value.isRemoved()) {
                     task.cancel();
                     return;
@@ -448,12 +448,12 @@ final class PageSession {
         int interpolationTicks = progressInterpolationTicks(cycle, frameCount);
         value.interpolation(0, interpolationTicks);
 
-        ScheduledTask progress = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
+        TaskHandle progress = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
             long elapsed = 0L;
             int lastFrame = -1;
 
             @Override
-            public void accept(ScheduledTask task) {
+            public void accept(TaskHandle task) {
                 if (!ensureSessionActive() || value.isRemoved()) {
                     task.cancel();
                     return;
@@ -485,7 +485,7 @@ final class PageSession {
     private void scheduleBarFade(BarPair pair, long fadeDelayTicks) {
         BoardDisplay container = pair.container();
         BoardDisplay value = pair.value();
-        ScheduledTask fade = scheduler.runDelayed(origin, task -> {
+        TaskHandle fade = scheduler.runDelayed(origin, task -> {
                 if (!ensureSessionActive()) {
                     task.cancel();
                     return;
@@ -494,7 +494,7 @@ final class PageSession {
                 container.opacity(packOpacity(OPACITY_TRANSPARENT));
                 value.interpolation(0, BAR_FADE_TICKS);
                 value.opacity(packOpacity(OPACITY_TRANSPARENT));
-                ScheduledTask cleanup = scheduler.runDelayed(origin, cleanupTask -> {
+                TaskHandle cleanup = scheduler.runDelayed(origin, cleanupTask -> {
                         despawnDisplay(container);
                         despawnDisplay(value);
                 }, BAR_FADE_TICKS);
@@ -606,7 +606,7 @@ final class PageSession {
         for (int i = 0; i < entries.size(); i++) {
             RowEntry entry = entries.get(i);
             long spawnDelay = delayBetween * i;
-            ScheduledTask task = scheduler.runDelayed(origin, scheduledTask -> {
+            TaskHandle task = scheduler.runDelayed(origin, scheduledTask -> {
                     if (!leaderboard.isRenderable()) {
                         stop();
                         return;
@@ -641,11 +641,11 @@ final class PageSession {
 
     private void animateRow(BoardDisplay display) {
         float[] offsets = animationCache.rowInOffsets();
-        ScheduledTask task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
+        TaskHandle task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
             int frame = 0;
 
             @Override
-            public void accept(ScheduledTask task) {
+            public void accept(TaskHandle task) {
                 if (!ensureSessionActive() || display.isRemoved()) {
                     task.cancel();
                     return;
@@ -667,11 +667,11 @@ final class PageSession {
     private void scheduleRowFade(BoardDisplay display) {
         long delay = Math.max(1L, definition.settings().pageDurationTicks());
         float[] offsets = animationCache.rowOutOffsets();
-        ScheduledTask task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
+        TaskHandle task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
             int frame = 0;
 
             @Override
-            public void accept(ScheduledTask task) {
+            public void accept(TaskHandle task) {
                 if (!ensureSessionActive() || display.isRemoved()) {
                     task.cancel();
                     return;

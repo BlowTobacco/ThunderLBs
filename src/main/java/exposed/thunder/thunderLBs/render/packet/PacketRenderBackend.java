@@ -5,7 +5,8 @@ import exposed.thunder.thunderLBs.leaderboard.Leaderboard;
 import exposed.thunder.thunderLBs.render.BoardDisplay;
 import exposed.thunder.thunderLBs.render.DisplayOptions;
 import exposed.thunder.thunderLBs.render.RenderBackend;
-import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import exposed.thunder.thunderLBs.scheduler.RegionTaskScheduler;
+import exposed.thunder.thunderLBs.scheduler.TaskHandle;
 import io.github.retrooper.packetevents.util.SpigotReflectionUtil;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -30,16 +31,15 @@ public final class PacketRenderBackend implements RenderBackend, Listener {
     private static final long VIEWER_REFRESH_TICKS = 20L;
     private static final long JOIN_SYNC_DELAY_TICKS = 1L;
 
-    private final ThunderLBs plugin;
+    private final RegionTaskScheduler scheduler;
     private final Map<Leaderboard, Channel> channels = new ConcurrentHashMap<>();
-    private ScheduledTask viewerTask;
+    private TaskHandle viewerTask;
 
     public PacketRenderBackend(ThunderLBs plugin) {
-        this.plugin = plugin;
+        this.scheduler = RegionTaskScheduler.create(plugin);
         Bukkit.getPluginManager().registerEvents(this, plugin);
-        this.viewerTask = Bukkit.getGlobalRegionScheduler().runAtFixedRate(
-                plugin,
-                task -> refreshAllViewers(),
+        this.viewerTask = scheduler.runGlobalAtFixedRate(
+                this::refreshAllViewers,
                 VIEWER_REFRESH_TICKS,
                 VIEWER_REFRESH_TICKS
         );
@@ -54,7 +54,7 @@ public final class PacketRenderBackend implements RenderBackend, Listener {
     public void register(Leaderboard board) {
         Channel channel = new Channel(board);
         channels.put(board, channel);
-        Bukkit.getGlobalRegionScheduler().run(plugin, task -> refreshAllViewers());
+        scheduler.runGlobal(this::refreshAllViewers);
     }
 
     @Override
@@ -118,7 +118,7 @@ public final class PacketRenderBackend implements RenderBackend, Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
-        player.getScheduler().runDelayed(plugin, task -> synchronizeViewer(player), null, JOIN_SYNC_DELAY_TICKS);
+        scheduler.executeDelayed(player, () -> synchronizeViewer(player), null, JOIN_SYNC_DELAY_TICKS);
     }
 
     @EventHandler
@@ -129,12 +129,12 @@ public final class PacketRenderBackend implements RenderBackend, Listener {
             channel.board.removeViewer(uuid);
         }
         Player player = event.getPlayer();
-        player.getScheduler().runDelayed(plugin, task -> synchronizeViewer(player), null, JOIN_SYNC_DELAY_TICKS);
+        scheduler.executeDelayed(player, () -> synchronizeViewer(player), null, JOIN_SYNC_DELAY_TICKS);
     }
 
     private void refreshAllViewers() {
         for (Player player : Bukkit.getOnlinePlayers()) {
-            player.getScheduler().execute(plugin, () -> synchronizeViewer(player), null, 1L);
+            scheduler.executeDelayed(player, () -> synchronizeViewer(player), null, 1L);
         }
     }
 

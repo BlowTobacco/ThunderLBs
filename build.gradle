@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'exposed.thunder'
-version = '1.0.0'
+version = '1.1.0'
 
 repositories {
     mavenCentral()
@@ -23,12 +23,20 @@ repositories {
     }
 }
 
+sourceSets {
+    dialogs {
+        compileClasspath += sourceSets.main.output
+    }
+}
+
 dependencies {
     implementation('org.bstats:bstats-bukkit:3.2.1')
 
-    compileOnly('io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT')
+    compileOnly('io.papermc.paper:paper-api:1.20.4-R0.1-SNAPSHOT')
     compileOnly('me.clip:placeholderapi:2.12.3')
     compileOnly('com.github.retrooper:packetevents-spigot:2.13.0')
+
+    dialogsCompileOnly('io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT')
 
     testImplementation(platform('org.junit:junit-bom:5.13.4'))
     testImplementation('org.junit.jupiter:junit-jupiter')
@@ -46,34 +54,41 @@ tasks {
     }
 }
 
+tasks.register('runServer1194', xyz.jpenilla.runpaper.task.RunServer) {
+    minecraftVersion('1.19.4')
+    runDirectory = file('run-1.19.4')
+    pluginJars.from(shadowJar.archiveFile)
+}
+
 jar {
     archiveClassifier = 'unshaded'
+    from sourceSets.dialogs.output
 }
 
 shadowJar {
     archiveClassifier = ''
+    from sourceSets.dialogs.output
     exclude 'module-info.class'
     relocate 'org.bstats', 'exposed.thunder.thunderLBs.libs.bstats'
 }
 
 build.dependsOn shadowJar
 
-def targetJavaVersion = 21
 java {
-    def javaVersion = JavaVersion.toVersion(targetJavaVersion)
-    sourceCompatibility = javaVersion
-    targetCompatibility = javaVersion
-    if (JavaVersion.current() < javaVersion) {
-        toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    if (!JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_21)) {
+        toolchain.languageVersion = JavaLanguageVersion.of(21)
     }
 }
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
-
-    if (targetJavaVersion >= 10 || JavaVersion.current().isJava10Compatible()) {
-        options.release.set(targetJavaVersion)
-    }
+    options.release.set(17)
+}
+tasks.named('compileDialogsJava', JavaCompile) {
+    options.release.set(21)
+}
+tasks.named('compileTestJava', JavaCompile) {
+    options.release.set(21)
 }
 
 processResources {

@@ -40,7 +40,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-public final class LeaderboardEditDialogs {
+public final class LeaderboardEditDialogs implements LeaderboardEditor {
     private static final String ADMIN_PERMISSION = "thunderlbs.admin";
     private static final int INPUT_WIDTH = 320;
     private static final int BUTTON_WIDTH = 150;
@@ -58,6 +58,7 @@ public final class LeaderboardEditDialogs {
         this.manager = manager;
     }
 
+    @Override
     public void openSelector(Player player) {
         if (!canEdit(player)) {
             return;
@@ -101,6 +102,7 @@ public final class LeaderboardEditDialogs {
         player.showDialog(dialog);
     }
 
+    @Override
     public void openBoard(Player player, String id) {
         LeaderboardDefinition definition = definition(player, id);
         if (definition == null) {
