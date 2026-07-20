@@ -2,8 +2,10 @@ package exposed.thunder.thunderLBs.leaderboard;
 
 import exposed.thunder.thunderLBs.ThunderLBs;
 import exposed.thunder.thunderLBs.animation.AnimationCache;
+import exposed.thunder.thunderLBs.animation.EasingType;
 import exposed.thunder.thunderLBs.config.PluginConfig;
 import exposed.thunder.thunderLBs.placeholder.PlaceholderBridge;
+import exposed.thunder.thunderLBs.placeholder.PlaceholderBridge.ProviderValue;
 import exposed.thunder.thunderLBs.render.BoardDisplay;
 import exposed.thunder.thunderLBs.render.DisplayOptions;
 import exposed.thunder.thunderLBs.render.RenderBackend;
@@ -53,7 +55,9 @@ final class PageSession {
 
     private final List<BoardDisplay> displays;
     private final List<TaskHandle> tasks;
+    private final List<FrameAnimation> frameAnimations;
     private final RegionTaskScheduler scheduler;
+    private TaskHandle frameAnimationTask;
     private boolean active;
     private boolean completed;
     private int liveDisplays;
@@ -82,6 +86,7 @@ final class PageSession {
         this.world = leaderboard.world();
         this.displays = new ArrayList<>();
         this.tasks = new ArrayList<>();
+        this.frameAnimations = new ArrayList<>();
         this.scheduler = RegionTaskScheduler.create(plugin);
         this.completed = false;
         this.liveDisplays = 0;
@@ -124,6 +129,8 @@ final class PageSession {
             }
         }
         tasks.clear();
+        frameAnimations.clear();
+        frameAnimationTask = null;
         while (!displays.isEmpty()) {
             despawnDisplay(displays.get(displays.size() - 1));
         }
@@ -153,12 +160,13 @@ final class PageSession {
         List<String> circled = config.formatting().circledNumbers();
         List<RowEntry> rows = new ArrayList<>(positions);
         PluginConfig.Provider provider = config.provider();
+        boolean nativeProvider = placeholderBridge.supportsProvider(config.providerName(), definition.type());
         String namePattern;
         String valuePattern;
         if (definition.type() == LeaderboardType.GROUP) {
             namePattern = provider.groupName();
             valuePattern = provider.groupValue();
-            if (!provider.supportsGroups()) {
+            if (!nativeProvider && !provider.supportsGroups()) {
                 plugin.getLogger().warning("Provider '" + config.providerName()
                         + "' has no group placeholders configured; leaderboard '" + definition.id()
                         + "' will not resolve.");
@@ -168,20 +176,43 @@ final class PageSession {
             valuePattern = provider.value();
         }
         String holderId = page.holderId();
-        namePattern = namePattern.replace("%holder%", holderId);
-        valuePattern = valuePattern.replace("%holder%", holderId);
+        String interval = page.interval();
+        namePattern = PluginConfig.Provider.applyInterval(namePattern, interval).replace("%holder%", holderId);
+        valuePattern = PluginConfig.Provider.applyInterval(valuePattern, interval).replace("%holder%", holderId);
         for (int index = 1; index <= positions; index++) {
             String position = Integer.toString(index);
             String namePlaceholder = namePattern.replace("%position%", position);
             String valuePlaceholder = valuePattern.replace("%position%", position);
+            String nameSource = nativeProvider
+                    ? nativeSource("top_name", position)
+                    : namePlaceholder;
+            String valueSource = nativeProvider
+                    ? nativeSource("top_value_raw", position)
+                    : valuePlaceholder;
 
-            String resolvedName = placeholderBridge.resolve(namePlaceholder);
-            logPlaceholder("name", index, namePlaceholder, resolvedName);
-            String playerName = sanitize(resolvedName, namePlaceholder);
+            String resolvedName = placeholderBridge.resolveProvider(
+                    config.providerName(),
+                    definition.type(),
+                    holderId,
+                    interval,
+                    index,
+                    ProviderValue.TOP_NAME,
+                    null,
+                    namePlaceholder);
+            logPlaceholder("name", index, nameSource, resolvedName);
+            String playerName = sanitize(resolvedName, nameSource);
 
-            String resolvedValue = placeholderBridge.resolve(valuePlaceholder);
-            logPlaceholder("value", index, valuePlaceholder, resolvedValue);
-            String rawValue = sanitize(resolvedValue, valuePlaceholder);
+            String resolvedValue = placeholderBridge.resolveProvider(
+                    config.providerName(),
+                    definition.type(),
+                    holderId,
+                    interval,
+                    index,
+                    ProviderValue.TOP_VALUE,
+                    null,
+                    valuePlaceholder);
+            logPlaceholder("value", index, valueSource, resolvedValue);
+            String rawValue = sanitize(resolvedValue, valueSource);
             String formattedValue = page.valueFormat().format(rawValue);
             if (page.hasPrefix()) {
                 formattedValue = page.prefix() + formattedValue;
@@ -192,10 +223,15 @@ final class PageSession {
             String circledNumber = index <= circled.size() ? circled.get(index - 1) : String.valueOf(index);
             double offsetY = config.defaults().rowStartOffset() - (index * config.defaults().rowSpacing());
 
-            String renderedRow = renderRow(circledNumber, playerName, formattedValue);
+            String rowColor = config.formatting().rankColor(index, page.color());
+            String renderedRow = renderRow(rowColor, circledNumber, playerName, formattedValue);
             rows.add(new RowEntry(offsetY, plugin.deserializeMiniMessage(renderedRow)));
         }
         return rows;
+    }
+
+    private String nativeSource(String query, String position) {
+        return config.providerName() + ":" + page.holderId() + ";" + query + ";" + position;
     }
 
     private String sanitize(String value, String placeholder) {
@@ -245,7 +281,9 @@ final class PageSession {
                 }
                 if (index >= characters.size()) {
                     task.cancel();
-                    display.opacity(packOpacity(OPACITY_OPAQUE));
+                    if (!usesClientInterpolatedTitleEntrance()) {
+                        display.opacity(packOpacity(OPACITY_OPAQUE));
+                    }
                     return;
                 }
                 display.text(characters.get(index));
@@ -275,74 +313,79 @@ final class PageSession {
     }
 
     private void playTypingSound(Location base, PluginConfig.Sounds.Typing typing) {
-        double radius = typing.radius();
         if (world == null) {
             return;
         }
-        scheduler.runGlobal(() -> {
-            for (org.bukkit.entity.Player player : Bukkit.getOnlinePlayers()) {
-                scheduler.executeDelayed(player, () -> {
-                    if (!world.equals(player.getWorld())
-                            || player.getLocation().distanceSquared(base) > radius * radius) {
-                        return;
-                    }
-                    float pitch = typing.pitchMin()
-                            + ThreadLocalRandom.current().nextFloat() * (typing.pitchMax() - typing.pitchMin());
-                    player.playSound(base, typing.key(), SoundCategory.AMBIENT, typing.volume(), pitch);
-                }, null, 1L);
-            }
-        });
+        float pitch = typing.pitchMin()
+                + ThreadLocalRandom.current().nextFloat() * (typing.pitchMax() - typing.pitchMin());
+        world.playSound(
+                base,
+                typing.key(),
+                SoundCategory.AMBIENT,
+                typingBroadcastVolume(typing.volume(), typing.radius()),
+                pitch);
+    }
+
+    static float typingBroadcastVolume(float configuredVolume, double radius) {
+        float volume = Math.max(0.0F, configuredVolume);
+        double naturalRadius = 16.0D * Math.max(1.0D, volume);
+        if (radius <= naturalRadius) {
+            return volume;
+        }
+        return (float) (radius / 16.0D);
     }
 
     private void scheduleTitleAnimations(BoardDisplay display) {
         float[] frames = animationCache.titleInScale();
-        TaskHandle task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
-            int frame = 0;
-
-            @Override
-            public void accept(TaskHandle task) {
-                if (!ensureSessionActive() || display.isRemoved()) {
-                    task.cancel();
-                    return;
-                }
-                if (frame >= frames.length) {
-                    task.cancel();
-                    scheduleTitleFade(display);
-                    return;
-                }
-                float scale = frames[frame];
-                display.interpolation(0, TITLE_INTERPOLATION);
-                applyScale(display, scale, opacityAtFrame(frame, frames.length, true));
-                frame++;
-            }
-        }, 1L, 1L);
-        tasks.add(task);
+        LeaderboardAnimations.Title animation = definition.animations().title();
+        if (usesClientInterpolation(animation.enabled(), animation.inCurve(), frames.length)) {
+            float targetScale = frames[frames.length - 1];
+            scheduleLinearTransition(
+                    display,
+                    1L,
+                    frames.length,
+                    () -> applyScale(display, targetScale, packOpacity(OPACITY_OPAQUE)),
+                    () -> scheduleTitleFade(display)
+            );
+            return;
+        }
+        scheduleFrameAnimation(
+                display,
+                1L,
+                frames,
+                (scale, frame, totalFrames) -> {
+                    display.interpolation(0, TITLE_INTERPOLATION);
+                    applyScale(display, scale, opacityAtFrame(frame, totalFrames, true));
+                },
+                () -> scheduleTitleFade(display)
+        );
     }
 
     private void scheduleTitleFade(BoardDisplay display) {
         long delay = Math.max(1L, definition.settings().pageDurationTicks());
         float[] frames = animationCache.titleOutScale();
-        TaskHandle task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
-            int frame = 0;
-
-            @Override
-            public void accept(TaskHandle task) {
-                if (!ensureSessionActive() || display.isRemoved()) {
-                    task.cancel();
-                    return;
-                }
-                if (frame >= frames.length) {
-                    task.cancel();
-                    despawnDisplay(display);
-                    return;
-                }
-                float scale = frames[frame];
-                display.interpolation(0, TITLE_INTERPOLATION);
-                applyScale(display, scale, opacityAtFrame(frame, frames.length, false));
-                frame++;
-            }
-        }, delay, 1L);
-        tasks.add(task);
+        LeaderboardAnimations.Title animation = definition.animations().title();
+        if (usesClientInterpolation(animation.enabled(), animation.outCurve(), frames.length)) {
+            float targetScale = frames[frames.length - 1];
+            scheduleLinearTransition(
+                    display,
+                    delay,
+                    frames.length,
+                    () -> applyScale(display, targetScale, packOpacity(OPACITY_TRANSPARENT)),
+                    () -> despawnDisplay(display)
+            );
+            return;
+        }
+        scheduleFrameAnimation(
+                display,
+                delay,
+                frames,
+                (scale, frame, totalFrames) -> {
+                    display.interpolation(0, TITLE_INTERPOLATION);
+                    applyScale(display, scale, opacityAtFrame(frame, totalFrames, false));
+                },
+                () -> despawnDisplay(display)
+        );
     }
 
     private void applyScale(BoardDisplay display, float scale, byte opacity) {
@@ -393,11 +436,15 @@ final class PageSession {
     private void spawnFillBar(World world) {
         Location anchor = origin.clone().add(0.0D, config.defaults().barOffsetY(), 0.0D);
         String foregroundColor = barUseHolderColor ? page.color() : null;
-        BarPair pair = spawnBarPair(world, anchor, foregroundColor);
+        boolean clientInterpolated = usesClientInterpolatedBar();
+        BarPair pair = spawnBarPair(world, anchor, foregroundColor, clientInterpolated);
         animateFillBar(pair);
     }
 
-    private BarPair spawnBarPair(World world, Location containerLocation, String foregroundColor) {
+    private BarPair spawnBarPair(World world,
+            Location containerLocation,
+            String foregroundColor,
+            boolean valueInitiallyOpaque) {
         Location valueLocation = computeValueLocation(containerLocation);
         String backgroundTemplate = definition.formatting().barBackground();
         String foregroundTemplate = definition.formatting().barForeground();
@@ -413,7 +460,7 @@ final class PageSession {
         BoardDisplay value = spawnDisplay(valueLocation, baseOptions()
                 .shadowed(false)
                 .text(deserializeBarComponent(foregroundTemplate, foregroundColor))
-                .opacity(packOpacity(OPACITY_TRANSPARENT))
+                .opacity(packOpacity(valueInitiallyOpaque ? OPACITY_OPAQUE : OPACITY_TRANSPARENT))
                 .interpolationDuration(BAR_INITIAL_INTERPOLATION)
                 .teleportDuration(BAR_INITIAL_INTERPOLATION)
                 .scale(0.0F, 2.0F, 1.0F));
@@ -428,6 +475,17 @@ final class PageSession {
         BoardDisplay value = pair.value();
         container.interpolation(0, BAR_INITIAL_INTERPOLATION);
         container.opacity(packOpacity(OPACITY_OPAQUE));
+
+        long cycle = progressCycleTicks(
+                definition.settings().pageDurationTicks(),
+                animationCache.titleInScale().length);
+        float[] scales = animationCache.barScales();
+        float[] translations = animationCache.barTranslations();
+        int frameCount = Math.max(Math.max(scales.length, translations.length), 1);
+        if (usesClientInterpolatedBar()) {
+            animateLinearFillBar(pair, cycle, scales, translations);
+            return;
+        }
         value.opacity(packOpacity(OPACITY_TRANSPARENT));
 
         TaskHandle fadeIn = scheduler.runDelayed(origin, task -> {
@@ -439,12 +497,6 @@ final class PageSession {
         }, 1L);
         tasks.add(fadeIn);
 
-        long cycle = progressCycleTicks(
-                definition.settings().pageDurationTicks(),
-                animationCache.titleInScale().length);
-        float[] scales = animationCache.barScales();
-        float[] translations = animationCache.barTranslations();
-        int frameCount = Math.max(Math.max(scales.length, translations.length), 1);
         int interpolationTicks = progressInterpolationTicks(cycle, frameCount);
         value.interpolation(0, interpolationTicks);
 
@@ -482,6 +534,40 @@ final class PageSession {
         tasks.add(progress);
     }
 
+    private void animateLinearFillBar(BarPair pair,
+            long cycle,
+            float[] scales,
+            float[] translations) {
+        BoardDisplay value = pair.value();
+        float targetScale = scales.length == 0 ? 1.0F : scales[scales.length - 1];
+        float targetTranslation = translations.length == 0 ? 0.0F : translations[translations.length - 1];
+
+        TaskHandle target = scheduler.runDelayed(origin, task -> {
+            if (!ensureSessionActive() || value.isRemoved()) {
+                task.cancel();
+                return;
+            }
+            value.interpolation(0, linearCycleInterpolationTicks(cycle));
+            applyBarFrame(pair, targetScale, targetTranslation);
+
+            TaskHandle resetInterpolation = scheduler.runDelayed(origin, resetTask -> {
+                if (!ensureSessionActive() || value.isRemoved()) {
+                    resetTask.cancel();
+                    return;
+                }
+                value.interpolation(0, BAR_INITIAL_INTERPOLATION);
+            }, linearCycleInterpolationTicks(cycle));
+            tasks.add(resetInterpolation);
+        }, 1L);
+        tasks.add(target);
+
+        long fadeDelay = barFadeDelayTicks(
+                definition.settings().intervalTicks(),
+                cycle,
+                BAR_FADE_TICKS);
+        scheduleBarFade(pair, cycle + fadeDelay);
+    }
+
     private void scheduleBarFade(BarPair pair, long fadeDelayTicks) {
         BoardDisplay container = pair.container();
         BoardDisplay value = pair.value();
@@ -510,6 +596,23 @@ final class PageSession {
     static int progressInterpolationTicks(long cycleTicks, int frameCount) {
         int transitions = Math.max(1, frameCount - 1);
         return Math.max(1, (int) Math.ceil((double) Math.max(1L, cycleTicks) / transitions));
+    }
+
+    static int linearInterpolationTicks(int frameCount) {
+        return Math.max(1, frameCount - 1);
+    }
+
+    static long linearCompletionDelayTicks(int frameCount) {
+        return Math.max(1L, frameCount);
+    }
+
+    static int linearCycleInterpolationTicks(long cycleTicks) {
+        long transitions = Math.max(1L, cycleTicks - 1L);
+        return (int) Math.min(Integer.MAX_VALUE, transitions);
+    }
+
+    static boolean usesClientInterpolation(boolean enabled, EasingType easing, int frameCount) {
+        return enabled && easing == EasingType.LINEAR && frameCount > 1;
     }
 
     static long barFadeDelayTicks(long intervalTicks, long cycleTicks, int fadeTicks) {
@@ -635,63 +738,162 @@ final class PageSession {
         animateRow(row);
     }
 
-    private String renderRow(String circledNumber, String playerName, String value) {
-        return definition.formatting().renderRow(page.color(), circledNumber, playerName, value, page.icon());
+    private String renderRow(String color, String circledNumber, String playerName, String value) {
+        return definition.formatting().renderRow(color, circledNumber, playerName, value, page.icon());
     }
 
     private void animateRow(BoardDisplay display) {
         float[] offsets = animationCache.rowInOffsets();
-        TaskHandle task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
-            int frame = 0;
-
-            @Override
-            public void accept(TaskHandle task) {
-                if (!ensureSessionActive() || display.isRemoved()) {
-                    task.cancel();
-                    return;
-                }
-                if (frame >= offsets.length) {
-                    task.cancel();
-                    scheduleRowFade(display);
-                    return;
-                }
-                float offset = offsets[frame];
-                display.interpolation(0, ROW_INTERPOLATION);
-                applyRowTransform(display, offset, opacityAtFrame(frame, offsets.length, true));
-                frame++;
-            }
-        }, 1L, 1L);
-        tasks.add(task);
+        LeaderboardAnimations.Row animation = definition.animations().row();
+        if (usesClientInterpolation(animation.enabled(), animation.inCurve(), offsets.length)) {
+            float targetOffset = offsets[offsets.length - 1];
+            scheduleLinearTransition(
+                    display,
+                    1L,
+                    offsets.length,
+                    () -> applyRowTransform(display, targetOffset, packOpacity(OPACITY_OPAQUE)),
+                    () -> scheduleRowFade(display)
+            );
+            return;
+        }
+        scheduleFrameAnimation(
+                display,
+                1L,
+                offsets,
+                (offset, frame, totalFrames) -> {
+                    display.interpolation(0, ROW_INTERPOLATION);
+                    applyRowTransform(display, offset, opacityAtFrame(frame, totalFrames, true));
+                },
+                () -> scheduleRowFade(display)
+        );
     }
 
     private void scheduleRowFade(BoardDisplay display) {
         long delay = Math.max(1L, definition.settings().pageDurationTicks());
         float[] offsets = animationCache.rowOutOffsets();
-        TaskHandle task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
-            int frame = 0;
-
-            @Override
-            public void accept(TaskHandle task) {
-                if (!ensureSessionActive() || display.isRemoved()) {
-                    task.cancel();
-                    return;
-                }
-                if (frame >= offsets.length) {
-                    task.cancel();
-                    despawnDisplay(display);
-                    return;
-                }
-                float offset = offsets[frame];
-                display.interpolation(0, ROW_INTERPOLATION);
-                applyRowTransform(display, offset, opacityAtFrame(frame, offsets.length, false));
-                frame++;
-            }
-        }, delay, 1L);
-        tasks.add(task);
+        LeaderboardAnimations.Row animation = definition.animations().row();
+        if (usesClientInterpolation(animation.enabled(), animation.outCurve(), offsets.length)) {
+            float targetOffset = offsets[offsets.length - 1];
+            scheduleLinearTransition(
+                    display,
+                    delay,
+                    offsets.length,
+                    () -> applyRowTransform(display, targetOffset, packOpacity(OPACITY_TRANSPARENT)),
+                    () -> despawnDisplay(display)
+            );
+            return;
+        }
+        scheduleFrameAnimation(
+                display,
+                delay,
+                offsets,
+                (offset, frame, totalFrames) -> {
+                    display.interpolation(0, ROW_INTERPOLATION);
+                    applyRowTransform(display, offset, opacityAtFrame(frame, totalFrames, false));
+                },
+                () -> despawnDisplay(display)
+        );
     }
 
     private void applyRowTransform(BoardDisplay display, float offset, byte opacity) {
         display.transformAndOpacity(offset, 0.0F, 0.0F, 1.0F, 1.0F, 1.0F, opacity);
+    }
+
+    private void scheduleFrameAnimation(BoardDisplay display,
+            long initialDelayTicks,
+            float[] frames,
+            FrameApplier applier,
+            Runnable onComplete) {
+        long startTick = Bukkit.getCurrentTick() + Math.max(1L, initialDelayTicks);
+        frameAnimations.add(new FrameAnimation(display, startTick, frames, applier, onComplete));
+        ensureFrameAnimationTask();
+    }
+
+    private void ensureFrameAnimationTask() {
+        if (frameAnimationTask != null && !frameAnimationTask.isCancelled()) {
+            return;
+        }
+        frameAnimationTask = scheduler.runAtFixedRate(origin, this::tickFrameAnimations, 1L, 1L);
+        tasks.add(frameAnimationTask);
+    }
+
+    private void tickFrameAnimations(TaskHandle task) {
+        if (!ensureSessionActive()) {
+            frameAnimations.clear();
+            task.cancel();
+            frameAnimationTask = null;
+            return;
+        }
+
+        long currentTick = Bukkit.getCurrentTick();
+        for (int index = frameAnimations.size() - 1; index >= 0; index--) {
+            FrameAnimation animation = frameAnimations.get(index);
+            if (animation.display.isRemoved()) {
+                frameAnimations.remove(index);
+                continue;
+            }
+            if (currentTick < animation.startTick) {
+                continue;
+            }
+            if (animation.frame >= animation.frames.length) {
+                frameAnimations.remove(index);
+                animation.onComplete.run();
+                continue;
+            }
+
+            animation.applier.apply(
+                    animation.frames[animation.frame],
+                    animation.frame,
+                    animation.frames.length);
+            animation.frame++;
+        }
+
+        if (frameAnimations.isEmpty()) {
+            task.cancel();
+            frameAnimationTask = null;
+        }
+    }
+
+    private void scheduleLinearTransition(BoardDisplay display,
+            long initialDelayTicks,
+            int frameCount,
+            Runnable applyTarget,
+            Runnable onComplete) {
+        TaskHandle start = scheduler.runDelayed(origin, task -> {
+            if (!ensureSessionActive() || display.isRemoved()) {
+                task.cancel();
+                return;
+            }
+            display.interpolation(0, linearInterpolationTicks(frameCount));
+            applyTarget.run();
+
+            TaskHandle completion = scheduler.runDelayed(origin, completionTask -> {
+                if (!ensureSessionActive() || display.isRemoved()) {
+                    completionTask.cancel();
+                    return;
+                }
+                display.interpolation(0, 1);
+                onComplete.run();
+            }, linearCompletionDelayTicks(frameCount));
+            tasks.add(completion);
+        }, Math.max(1L, initialDelayTicks));
+        tasks.add(start);
+    }
+
+    private boolean usesClientInterpolatedBar() {
+        LeaderboardAnimations.Bar animation = definition.animations().bar();
+        int frameCount = Math.max(
+                animationCache.barScales().length,
+                animationCache.barTranslations().length);
+        return usesClientInterpolation(animation.enabled(), animation.curve(), frameCount);
+    }
+
+    private boolean usesClientInterpolatedTitleEntrance() {
+        LeaderboardAnimations.Title animation = definition.animations().title();
+        return usesClientInterpolation(
+                animation.enabled(),
+                animation.inCurve(),
+                animationCache.titleInScale().length);
     }
 
     private boolean ensureSessionActive() {
@@ -746,5 +948,31 @@ final class PageSession {
     }
 
     private record RowEntry(double offsetY, Component component) {
+    }
+
+    @FunctionalInterface
+    private interface FrameApplier {
+        void apply(float value, int frame, int totalFrames);
+    }
+
+    private static final class FrameAnimation {
+        private final BoardDisplay display;
+        private final long startTick;
+        private final float[] frames;
+        private final FrameApplier applier;
+        private final Runnable onComplete;
+        private int frame;
+
+        private FrameAnimation(BoardDisplay display,
+                long startTick,
+                float[] frames,
+                FrameApplier applier,
+                Runnable onComplete) {
+            this.display = display;
+            this.startTick = startTick;
+            this.frames = frames;
+            this.applier = applier;
+            this.onComplete = onComplete;
+        }
     }
 }

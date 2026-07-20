@@ -2,6 +2,9 @@
 # ThunderLBs configuration #
 ############################
 
+# Used for automatic configuration upgrades. Do not change this.
+config-version: 4
+
 # How leaderboards are shown to players.
 #   packet: the default when PacketEvents is installed. These aren't spawned
 #           in the world itself and should mean less server thread usage.
@@ -14,8 +17,9 @@ render:
   # Can be overridden per board with /lb edit <id> viewdistance <blocks>.
   view-distance: 48
 
-# Where leaderboard data comes from. Built in: topper, ajleaderboards.
-# Placeholder patterns and custom providers live in providers.yml.
+# Where leaderboard data comes from. Built in: topper, ajleaderboards,
+# timedtopper. Built-ins use native plugin APIs; PlaceholderAPI-backed custom
+# providers live in providers.yml.
 provider: topper
 
 missing-text: "---"
@@ -35,6 +39,11 @@ defaults:
   bar-offset-y: -0.5
   relative-offset: -0.3
   cleanup-on-start: true
+
+# Runtime refresh controls. Higher values reduce placeholder and scheduler work
+# at the cost of slower viewer-relative value updates. 20 ticks equal one second.
+performance:
+  relative-refresh-ticks: 40
 
 # The bar shown between the title and the rows.
 #   dots: one symbol per page. Pages that have already been shown use their
@@ -59,6 +68,15 @@ formatting:
   title: "<color:%color%>%icon%</color> <bold><color:%color%>%title%</color></bold>"
   row: "<color:%color%>%position%</color> <white>%player%</white> <dark_gray>→</dark_gray> <color:%color%>%value%</color>"
   relative: "<color:%color%>%position%</color> <white>%player%</white> <dark_gray>→</dark_gray> <color:%color%>%value%</color>"
+  # Override %color% in the row format for specific positions, e.g. gold,
+  # silver and bronze for the top three. Positions not listed here keep the
+  # page's color. Also applies to the relative line when the viewer holds one
+  # of these ranks. Replace {} with the example values below to enable it.
+  rank-colors: {}
+  # rank-colors:
+  #   1: "#FFD700"
+  #   2: "#C0C0C0"
+  #   3: "#CD7F32"
   circled-numbers:
     - "①"
     - "②"
@@ -79,6 +97,8 @@ sounds:
     volume: 0.5
     pitch-min: 1.85
     pitch-max: 2.0
+    # A world sound has a natural minimum range of about 16 blocks. Larger
+    # values extend that range by raising the broadcast volume.
     radius: 16
 
 # Animation configurations. You most likely don't need to touch these.

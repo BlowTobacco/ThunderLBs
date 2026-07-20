@@ -3,6 +3,8 @@ package exposed.thunder.thunderLBs.leaderboard;
 import org.bukkit.configuration.ConfigurationSection;
 
 public final class LeaderboardPage {
+    public static final String DEFAULT_INTERVAL = "alltime";
+
     private final String holderId;
     private final String title;
     private final String color;
@@ -10,9 +12,15 @@ public final class LeaderboardPage {
     private final ValueFormat valueFormat;
     private final String prefix;
     private final String suffix;
+    private final String interval;
 
     public LeaderboardPage(String holderId, String title, String color, String icon, ValueFormat valueFormat,
             String prefix, String suffix) {
+        this(holderId, title, color, icon, valueFormat, prefix, suffix, DEFAULT_INTERVAL);
+    }
+
+    public LeaderboardPage(String holderId, String title, String color, String icon, ValueFormat valueFormat,
+            String prefix, String suffix, String interval) {
         this.holderId = holderId;
         this.title = title;
         this.color = color;
@@ -20,6 +28,14 @@ public final class LeaderboardPage {
         this.valueFormat = valueFormat;
         this.prefix = sanitizeSuffix(prefix);
         this.suffix = sanitizeSuffix(suffix);
+        this.interval = sanitizeInterval(interval);
+    }
+
+    private static String sanitizeInterval(String interval) {
+        if (interval == null || interval.isBlank()) {
+            return DEFAULT_INTERVAL;
+        }
+        return interval.trim().toLowerCase(java.util.Locale.ROOT);
     }
 
     private String sanitizeSuffix(String suffix) {
@@ -61,6 +77,14 @@ public final class LeaderboardPage {
         return suffix;
     }
 
+    public String interval() {
+        return interval;
+    }
+
+    public LeaderboardPage withInterval(String interval) {
+        return new LeaderboardPage(holderId, title, color, icon, valueFormat, prefix, suffix, interval);
+    }
+
     public boolean hasSuffix() {
         return !suffix.isEmpty();
     }
@@ -80,7 +104,8 @@ public final class LeaderboardPage {
         ValueFormat format = ValueFormat.fromConfig(section.getString("value-format"), ValueFormat.SHORT_NUMBER);
         String prefix = section.getString("prefix", "");
         String suffix = section.getString("suffix", "");
-        return new LeaderboardPage(holder, title, color, icon, format, prefix, suffix);
+        String interval = section.getString("interval", DEFAULT_INTERVAL);
+        return new LeaderboardPage(holder, title, color, icon, format, prefix, suffix, interval);
     }
 
     public void serialize(ConfigurationSection section) {
@@ -91,6 +116,7 @@ public final class LeaderboardPage {
         section.set("value-format", valueFormat.name());
         section.set("prefix", prefix);
         section.set("suffix", suffix);
+        section.set("interval", interval);
     }
 
     @Override

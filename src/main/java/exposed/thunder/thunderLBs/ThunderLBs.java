@@ -1,6 +1,7 @@
 package exposed.thunder.thunderLBs;
 
 import exposed.thunder.thunderLBs.commands.LeaderboardsCommand;
+import exposed.thunder.thunderLBs.config.ConfigMigrator;
 import exposed.thunder.thunderLBs.config.PluginConfig;
 import exposed.thunder.thunderLBs.leaderboard.LeaderboardDefinition;
 import exposed.thunder.thunderLBs.leaderboard.LeaderboardManager;
@@ -166,6 +167,9 @@ public final class ThunderLBs extends JavaPlugin implements Listener {
         if (leaderboardManager != null) {
             leaderboardManager.shutdown();
         }
+        if (placeholderBridge != null) {
+            placeholderBridge.close();
+        }
         if (renderBackend != null) {
             renderBackend.shutdown();
         }
@@ -189,6 +193,7 @@ public final class ThunderLBs extends JavaPlugin implements Listener {
         saveDefaultConfig();
         saveBundledResource("messages.yml");
         saveBundledResource("providers.yml");
+        new ConfigMigrator(this).migrate();
     }
 
     private void saveBundledResource(String name) {

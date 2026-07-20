@@ -202,7 +202,11 @@ final class PacketBoardDisplay implements BoardDisplay {
     @Override
     public synchronized void opacity(byte opacity) {
         this.opacity = opacity;
-        sendMetadata(List.of(new EntityData<>(INDEX_OPACITY, EntityDataTypes.BYTE, opacity)));
+        List<EntityData<?>> data = new ArrayList<>(3);
+        data.add(new EntityData<>(INDEX_INTERPOLATION_DELAY, EntityDataTypes.INT, interpolationDelay));
+        data.add(new EntityData<>(INDEX_INTERPOLATION_DURATION, EntityDataTypes.INT, interpolationDuration));
+        data.add(new EntityData<>(INDEX_OPACITY, EntityDataTypes.BYTE, opacity));
+        sendMetadata(data);
     }
 
     @Override

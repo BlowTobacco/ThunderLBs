@@ -3,6 +3,7 @@ package exposed.thunder.thunderLBs.leaderboard;
 import exposed.thunder.thunderLBs.ThunderLBs;
 import exposed.thunder.thunderLBs.config.PluginConfig;
 import exposed.thunder.thunderLBs.placeholder.PlaceholderBridge;
+import exposed.thunder.thunderLBs.placeholder.PlaceholderBridge.ProviderValue;
 import exposed.thunder.thunderLBs.render.BoardDisplay;
 import exposed.thunder.thunderLBs.render.DisplayOptions;
 import exposed.thunder.thunderLBs.scheduler.RegionTaskScheduler;
@@ -23,7 +24,6 @@ import java.util.Set;
 import java.util.UUID;
 
 public final class RelativeDisplayManager {
-    private static final long REFRESH_TICKS = 20L;
     private static final int GLIDE_TICKS = 10;
     private static final int ANIMATION_INTERPOLATION_TICKS = 1;
     private static final int OPACITY_TRANSPARENT = 0;
@@ -37,6 +37,7 @@ public final class RelativeDisplayManager {
     private final World world;
     private final Location displayLocation;
     private final double rangeSquared;
+    private final long refreshTicks;
     private final Map<UUID, BoardDisplay> playerDisplays = new HashMap<>();
     private final Map<UUID, String> lastRenderedContent = new HashMap<>();
     private final List<TaskHandle> animationTasks = new ArrayList<>();
@@ -46,6 +47,7 @@ public final class RelativeDisplayManager {
     private TaskHandle refreshTask;
     private float animationOffset;
     private byte animationOpacity = packOpacity(OPACITY_TRANSPARENT);
+    private LinearTransition linearTransition;
     private boolean pageExitComplete;
     private boolean warnedUnsupported;
 
@@ -58,6 +60,7 @@ public final class RelativeDisplayManager {
         this.world = leaderboard.world();
         this.displayLocation = calculateLocation(definition);
         this.rangeSquared = leaderboard.rangeSquared();
+        this.refreshTicks = plugin.getPluginConfig().performance().relativeRefreshTicks();
         this.scheduler = RegionTaskScheduler.create(plugin);
     }
 
@@ -66,7 +69,7 @@ public final class RelativeDisplayManager {
         if (!definition.settings().showRelativePosition()) {
             return;
         }
-        refreshTask = scheduler.runGlobalAtFixedRate(this::refreshPlayers, REFRESH_TICKS, REFRESH_TICKS);
+        refreshTask = scheduler.runGlobalAtFixedRate(this::refreshPlayers, refreshTicks, refreshTicks);
         refresh();
     }
 
@@ -93,6 +96,7 @@ public final class RelativeDisplayManager {
             }
         }
         animationTasks.clear();
+        linearTransition = null;
     }
 
     public void cleanup() {
@@ -129,6 +133,18 @@ public final class RelativeDisplayManager {
         float[] offsets = leaderboard.animationCache().rowInOffsets();
         float initialOffset = offsets.length == 0 ? 0.0F : offsets[0];
         applyAnimationState(initialOffset, packOpacity(OPACITY_TRANSPARENT));
+        LeaderboardAnimations.Row animation = definition.animations().row();
+        if (PageSession.usesClientInterpolation(animation.enabled(), animation.inCurve(), offsets.length)) {
+            float targetOffset = offsets[offsets.length - 1];
+            scheduleLinearTransition(
+                    Math.max(1L, entranceDelay),
+                    offsets.length,
+                    targetOffset,
+                    packOpacity(OPACITY_OPAQUE),
+                    this::schedulePageExit
+            );
+            return;
+        }
 
         TaskHandle entrance = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
             private int frame;
@@ -155,6 +171,18 @@ public final class RelativeDisplayManager {
     private void schedulePageExit() {
         float[] offsets = leaderboard.animationCache().rowOutOffsets();
         long delay = Math.max(1L, leaderboard.definition().settings().pageDurationTicks());
+        LeaderboardAnimations.Row animation = definition.animations().row();
+        if (PageSession.usesClientInterpolation(animation.enabled(), animation.outCurve(), offsets.length)) {
+            float targetOffset = offsets[offsets.length - 1];
+            scheduleLinearTransition(
+                    delay,
+                    offsets.length,
+                    targetOffset,
+                    packOpacity(OPACITY_TRANSPARENT),
+                    () -> pageExitComplete = true
+            );
+            return;
+        }
         TaskHandle exit = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
             private int frame;
 
@@ -178,6 +206,7 @@ public final class RelativeDisplayManager {
     }
 
     private void applyAnimationState(float offset, byte opacity) {
+        linearTransition = null;
         this.animationOffset = offset;
         this.animationOpacity = opacity;
         for (BoardDisplay display : playerDisplays.values()) {
@@ -187,6 +216,69 @@ public final class RelativeDisplayManager {
             display.interpolation(0, ANIMATION_INTERPOLATION_TICKS);
             display.transformAndOpacity(offset, 0.0F, 0.0F, 1.0F, 1.0F, 1.0F, opacity);
         }
+    }
+
+    private void scheduleLinearTransition(long initialDelayTicks,
+            int frameCount,
+            float targetOffset,
+            byte targetOpacity,
+            Runnable onComplete) {
+        TaskHandle start = scheduler.runDelayed(origin, task -> {
+            if (activePage == null) {
+                task.cancel();
+                return;
+            }
+            int duration = PageSession.linearInterpolationTicks(frameCount);
+            float startOffset = animationOffset;
+            byte startOpacity = animationOpacity;
+            LinearTransition transition = new LinearTransition(
+                    Bukkit.getCurrentTick(),
+                    duration,
+                    startOffset,
+                    targetOffset,
+                    startOpacity,
+                    targetOpacity);
+            linearTransition = transition;
+            animationOffset = startOffset;
+            animationOpacity = startOpacity;
+
+            for (BoardDisplay display : playerDisplays.values()) {
+                applyLinearTarget(display, transition, duration);
+            }
+
+            TaskHandle completion = scheduler.runDelayed(origin, completionTask -> {
+                if (linearTransition != transition) {
+                    completionTask.cancel();
+                    return;
+                }
+                linearTransition = null;
+                animationOffset = targetOffset;
+                animationOpacity = targetOpacity;
+                for (BoardDisplay display : playerDisplays.values()) {
+                    if (display != null && !display.isRemoved()) {
+                        display.interpolation(0, ANIMATION_INTERPOLATION_TICKS);
+                    }
+                }
+                onComplete.run();
+            }, PageSession.linearCompletionDelayTicks(frameCount));
+            animationTasks.add(completion);
+        }, Math.max(1L, initialDelayTicks));
+        animationTasks.add(start);
+    }
+
+    private void applyLinearTarget(BoardDisplay display, LinearTransition transition, int remainingTicks) {
+        if (display == null || display.isRemoved()) {
+            return;
+        }
+        display.interpolation(0, Math.max(1, remainingTicks));
+        display.transformAndOpacity(
+                transition.targetOffset(),
+                0.0F,
+                0.0F,
+                1.0F,
+                1.0F,
+                1.0F,
+                transition.targetOpacity());
     }
 
     public void refresh() {
@@ -199,11 +291,12 @@ public final class RelativeDisplayManager {
             scheduler.execute(origin, this::cleanup);
             return;
         }
-        if (contentContext == null || contentContext.rankPlaceholder().isEmpty()) {
+        if (contentContext == null
+                || (!contentContext.nativeProvider() && contentContext.rankPlaceholder().isEmpty())) {
             if (!warnedUnsupported) {
                 warnedUnsupported = true;
                 plugin.getLogger().warning("Provider '" + plugin.getPluginConfig().providerName()
-                        + "' has no viewer rank placeholder for leaderboard '" + def.id()
+                        + "' has no viewer-rank source for leaderboard '" + def.id()
                         + "'; the relative row is disabled.");
             }
             scheduler.execute(origin, this::cleanup);
@@ -247,7 +340,7 @@ public final class RelativeDisplayManager {
         LeaderboardPage page = activePage;
         ContentContext context = contentContext;
         if (!definition.settings().showRelativePosition() || page == null || context == null
-                || context.rankPlaceholder().isEmpty()) {
+                || (!context.nativeProvider() && context.rankPlaceholder().isEmpty())) {
             scheduler.execute(origin, () -> removeDisplay(player.getUniqueId()));
             return;
         }
@@ -291,17 +384,82 @@ public final class RelativeDisplayManager {
     }
 
     private BoardDisplay spawnDisplay(Player viewer) {
+        AnimationSnapshot animation = currentAnimationSnapshot();
         BoardDisplay display = plugin.renderBackend().spawn(leaderboard, displayLocation, new DisplayOptions()
                 .billboard(definition.billboard())
                 .shadowed(definition.textShadow())
-                .opacity(animationOpacity)
+                .opacity(animation.opacity())
                 .interpolationDuration(ANIMATION_INTERPOLATION_TICKS)
                 .teleportDuration(GLIDE_TICKS)
-                .translation(animationOffset, 0.0F, 0.0F)
+                .translation(animation.offset(), 0.0F, 0.0F)
                 .viewRange(Math.max(0.1F, definition.viewDistance() / 64.0F))
                 .viewer(viewer));
         leaderboard.track(display);
+        if (animation.transition() != null && animation.remainingTicks() > 0) {
+            LinearTransition expected = animation.transition();
+            TaskHandle continueAnimation = scheduler.runDelayed(origin, task -> {
+                if (linearTransition != expected || display.isRemoved()) {
+                    task.cancel();
+                    return;
+                }
+                AnimationSnapshot current = currentAnimationSnapshot();
+                if (current.transition() != expected) {
+                    return;
+                }
+                if (current.remainingTicks() <= 0) {
+                    display.interpolation(0, ANIMATION_INTERPOLATION_TICKS);
+                    display.transformAndOpacity(
+                            expected.targetOffset(),
+                            0.0F,
+                            0.0F,
+                            1.0F,
+                            1.0F,
+                            1.0F,
+                            expected.targetOpacity());
+                    return;
+                }
+                applyLinearTarget(display, expected, current.remainingTicks());
+            }, 1L);
+            animationTasks.add(continueAnimation);
+        }
         return display;
+    }
+
+    private AnimationSnapshot currentAnimationSnapshot() {
+        LinearTransition transition = linearTransition;
+        if (transition == null) {
+            return new AnimationSnapshot(animationOffset, animationOpacity, null, 0);
+        }
+        long elapsed = Math.max(0L, (long) Bukkit.getCurrentTick() - transition.startTick());
+        int duration = Math.max(1, transition.durationTicks());
+        float offset = interpolateLinear(transition.startOffset(), transition.targetOffset(), elapsed, duration);
+        byte opacity = interpolateOpacity(transition.startOpacity(), transition.targetOpacity(), elapsed, duration);
+        int remaining = remainingLinearTicks(elapsed, duration);
+        return new AnimationSnapshot(offset, opacity, transition, remaining);
+    }
+
+    static float interpolateLinear(float start, float target, long elapsedTicks, int durationTicks) {
+        double progress = linearProgress(elapsedTicks, durationTicks);
+        return (float) (start + (target - start) * progress);
+    }
+
+    static byte interpolateOpacity(byte start, byte target, long elapsedTicks, int durationTicks) {
+        double progress = linearProgress(elapsedTicks, durationTicks);
+        int startAlpha = Byte.toUnsignedInt(start);
+        int targetAlpha = Byte.toUnsignedInt(target);
+        return packOpacity((int) Math.round(startAlpha + (targetAlpha - startAlpha) * progress));
+    }
+
+    static int remainingLinearTicks(long elapsedTicks, int durationTicks) {
+        int duration = Math.max(1, durationTicks);
+        long elapsed = Math.max(0L, Math.min((long) duration, elapsedTicks));
+        return duration - (int) elapsed;
+    }
+
+    private static double linearProgress(long elapsedTicks, int durationTicks) {
+        int duration = Math.max(1, durationTicks);
+        long elapsed = Math.max(0L, Math.min((long) duration, elapsedTicks));
+        return (double) elapsed / (double) duration;
     }
 
     private String rankPattern(LeaderboardDefinition def) {
@@ -317,11 +475,17 @@ public final class RelativeDisplayManager {
     private ContentContext createContentContext(LeaderboardPage page) {
         PluginConfig config = plugin.getPluginConfig();
         String holderId = page.holderId();
-        String rankPlaceholder = rankPattern(definition).replace("%holder%", holderId);
-        String valuePlaceholder = valuePattern(definition).replace("%holder%", holderId);
+        String interval = page.interval();
+        String rankPlaceholder = PluginConfig.Provider.applyInterval(rankPattern(definition), interval)
+                .replace("%holder%", holderId);
+        String valuePlaceholder = PluginConfig.Provider.applyInterval(valuePattern(definition), interval)
+                .replace("%holder%", holderId);
         String teamPlaceholder = definition.type() == LeaderboardType.GROUP
-                ? config.provider().groupTeam() : "";
-        return new ContentContext(rankPlaceholder, valuePlaceholder, teamPlaceholder,
+                ? PluginConfig.Provider.applyInterval(config.provider().groupTeam(), interval)
+                        .replace("%holder%", holderId)
+                : "";
+        boolean nativeProvider = placeholderBridge.supportsProvider(config.providerName(), definition.type());
+        return new ContentContext(rankPlaceholder, valuePlaceholder, teamPlaceholder, nativeProvider,
                 page.color(), page.icon());
     }
 
@@ -329,12 +493,34 @@ public final class RelativeDisplayManager {
         PluginConfig config = plugin.getPluginConfig();
         String rankPlaceholder = context.rankPlaceholder();
         String valuePlaceholder = context.valuePlaceholder();
+        String rankSource = context.nativeProvider()
+                ? nativeSource(page, "top_rank")
+                : rankPlaceholder;
+        String valueSource = context.nativeProvider()
+                ? nativeSource(page, "value_raw")
+                : valuePlaceholder;
 
-        String resolvedRank = placeholderBridge.resolve(rankPlaceholder, player);
-        boolean rankMissing = isMissing(resolvedRank, rankPlaceholder);
+        String resolvedRank = placeholderBridge.resolveProvider(
+                config.providerName(),
+                definition.type(),
+                page.holderId(),
+                page.interval(),
+                0,
+                ProviderValue.VIEWER_RANK,
+                player,
+                rankPlaceholder);
+        boolean rankMissing = isMissing(resolvedRank, rankSource);
         String rankStr = rankMissing ? config.missingPosition() : resolvedRank;
-        String valueStr = valuePlaceholder.isEmpty() ? config.missingText()
-                : sanitize(placeholderBridge.resolve(valuePlaceholder, player), valuePlaceholder, config);
+        String resolvedValue = placeholderBridge.resolveProvider(
+                config.providerName(),
+                definition.type(),
+                page.holderId(),
+                page.interval(),
+                0,
+                ProviderValue.VIEWER_VALUE,
+                player,
+                valuePlaceholder);
+        String valueStr = sanitize(resolvedValue, valueSource, config);
 
         if (!valueStr.equals(config.missingText())) {
             valueStr = page.valueFormat().format(valueStr);
@@ -348,17 +534,59 @@ public final class RelativeDisplayManager {
 
         String playerName;
         if (definition.type() == LeaderboardType.GROUP) {
-            String teamPlaceholder = context.teamPlaceholder();
-            playerName = teamPlaceholder.isEmpty() ? player.getName()
-                    : sanitize(placeholderBridge.resolve(teamPlaceholder, player), teamPlaceholder, config);
+            playerName = resolveGroupName(player, page, context, rankStr, rankMissing, config);
         } else {
             playerName = player.getName();
         }
 
         String positionStr = displayPosition(rankStr, rankMissing);
 
+        String color = context.color();
+        if (!rankMissing) {
+            try {
+                color = config.formatting().rankColor(Integer.parseInt(rankStr.trim()), color);
+            } catch (NumberFormatException ignored) {}
+        }
         return definition.formatting().renderRelative(
-                context.color(), positionStr, rankStr, playerName, valueStr, context.icon());
+                color, positionStr, rankStr, playerName, valueStr, context.icon());
+    }
+
+    private String resolveGroupName(Player player,
+            LeaderboardPage page,
+            ContentContext context,
+            String rank,
+            boolean rankMissing,
+            PluginConfig config) {
+        if (context.nativeProvider()) {
+            if (rankMissing) {
+                return config.missingText();
+            }
+            try {
+                int position = Integer.parseInt(rank.trim());
+                String source = nativeSource(page, "top_name;" + position);
+                String resolved = placeholderBridge.resolveProvider(
+                        config.providerName(),
+                        definition.type(),
+                        page.holderId(),
+                        page.interval(),
+                        position,
+                        ProviderValue.TOP_NAME,
+                        player,
+                        "");
+                if (!isMissing(resolved, source)) {
+                    return resolved;
+                }
+            } catch (NumberFormatException ignored) {}
+            return config.missingText();
+        }
+
+        String teamPlaceholder = context.teamPlaceholder();
+        return teamPlaceholder.isEmpty() ? player.getName()
+                : sanitize(placeholderBridge.resolve(teamPlaceholder, player), teamPlaceholder, config);
+    }
+
+    private String nativeSource(LeaderboardPage page, String query) {
+        return plugin.getPluginConfig().providerName() + ":" + page.holderId() + ";" + query;
     }
 
     private void updateContent(BoardDisplay display, UUID playerId, String rendered) {
@@ -415,6 +643,20 @@ public final class RelativeDisplayManager {
     }
 
     private record ContentContext(String rankPlaceholder, String valuePlaceholder, String teamPlaceholder,
-                                  String color, String icon) {
+                                  boolean nativeProvider, String color, String icon) {
+    }
+
+    private record LinearTransition(long startTick,
+                                    int durationTicks,
+                                    float startOffset,
+                                    float targetOffset,
+                                    byte startOpacity,
+                                    byte targetOpacity) {
+    }
+
+    private record AnimationSnapshot(float offset,
+                                     byte opacity,
+                                     LinearTransition transition,
+                                     int remainingTicks) {
     }
 }

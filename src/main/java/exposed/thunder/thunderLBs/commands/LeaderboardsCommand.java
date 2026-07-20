@@ -12,6 +12,7 @@ import exposed.thunder.thunderLBs.leaderboard.LeaderboardPage;
 import exposed.thunder.thunderLBs.leaderboard.LeaderboardType;
 import exposed.thunder.thunderLBs.leaderboard.ValueFormat;
 import exposed.thunder.thunderLBs.leaderboard.ValidationIssue;
+import exposed.thunder.thunderLBs.placeholder.PlaceholderBridge.ProviderValue;
 import exposed.thunder.thunderLBs.util.FormattingUtil;
 import exposed.thunder.thunderLBs.util.VersionSupport;
 import net.kyori.adventure.text.Component;
@@ -48,7 +49,9 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
             "disable", "reload", "validate", "doctor", "tp", "movehere", "info", "edit", "debug", "help");
     private static final List<String> EDIT_OPTIONS = List.of("positions", "holder", "billboard", "yaw", "location",
             "textshadow", "bar", "viewdistance", "relative", "duration", "animations");
-    private static final List<String> HOLDER_ACTIONS = List.of("list", "add", "set", "remove");
+    private static final List<String> HOLDER_ACTIONS = List.of("list", "add", "set", "remove", "interval");
+    private static final List<String> INTERVAL_SUGGESTIONS = List.of("alltime", "hourly", "daily", "weekly",
+            "monthly", "yearly");
     private static final List<String> DURATION_TYPES = List.of("interval", "page", "rowdelay", "row", "typing");
     private static final List<String> BOOLEAN_OPTIONS = List.of("true", "false");
     private static final List<String> BAR_MODES = List.of("dots", "bar", "none");
@@ -325,10 +328,16 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
         if (provider.equalsIgnoreCase("ajleaderboards")) {
             return dependencyState("ajLeaderboards");
         }
+        if (provider.equalsIgnoreCase("timedtopper")) {
+            return dependencyState("TimedTopper");
+        }
         return "custom patterns";
     }
 
     private void diagnoseProviderPatterns(CommandSender sender) {
+        if (plugin.getPlaceholderBridge().isNativeProvider(plugin.getPluginConfig().providerName())) {
+            return;
+        }
         exposed.thunder.thunderLBs.config.PluginConfig.Provider provider = plugin.getPluginConfig().provider();
         String[] names = { "name", "value", "viewer-rank", "viewer-value" };
         String[] values = { provider.name(), provider.value(), provider.viewerRank(), provider.viewerValue() };
@@ -347,24 +356,54 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
         }
         LeaderboardDefinition definition = board.definition();
         LeaderboardPage page = definition.pages().get(0);
+        if (plugin.getPlaceholderBridge().supportsProvider(
+                plugin.getPluginConfig().providerName(), definition.type())) {
+            diagnoseNativeValue(sender, definition, page, "name", ProviderValue.TOP_NAME);
+            diagnoseNativeValue(sender, definition, page, "value", ProviderValue.TOP_VALUE);
+            return;
+        }
         exposed.thunder.thunderLBs.config.PluginConfig.Provider provider = plugin.getPluginConfig().provider();
         String namePattern = definition.type() == LeaderboardType.GROUP ? provider.groupName() : provider.name();
         String valuePattern = definition.type() == LeaderboardType.GROUP ? provider.groupValue() : provider.value();
-        diagnosePlaceholder(sender, definition.id(), "name", namePattern, page.holderId());
-        diagnosePlaceholder(sender, definition.id(), "value", valuePattern, page.holderId());
+        diagnosePlaceholder(sender, definition.id(), "name", namePattern, page.holderId(), page.interval());
+        diagnosePlaceholder(sender, definition.id(), "value", valuePattern, page.holderId(), page.interval());
     }
 
     private void diagnosePlaceholder(CommandSender sender, String boardId, String type, String pattern,
-            String holder) {
+            String holder, String interval) {
         if (pattern == null || pattern.isBlank()) {
             send(sender, "&eWARNING &f" + boardId + ".provider." + type + "&7: provider pattern is empty");
             return;
         }
-        String placeholder = pattern.replace("%holder%", holder).replace("%position%", "1");
+        String placeholder = exposed.thunder.thunderLBs.config.PluginConfig.Provider
+                .applyInterval(pattern, interval)
+                .replace("%holder%", holder)
+                .replace("%position%", "1");
         String resolved = plugin.getPlaceholderBridge().resolve(placeholder);
         if (resolved == null || resolved.equals(placeholder) || resolved.contains("%")) {
             send(sender, "&eWARNING &f" + boardId + ".provider." + type
                     + "&7: sample placeholder did not resolve (&f" + placeholder + "&7)");
+        }
+    }
+
+    private void diagnoseNativeValue(
+            CommandSender sender,
+            LeaderboardDefinition definition,
+            LeaderboardPage page,
+            String type,
+            ProviderValue value) {
+        String resolved = plugin.getPlaceholderBridge().resolveProvider(
+                plugin.getPluginConfig().providerName(),
+                definition.type(),
+                page.holderId(),
+                page.interval(),
+                1,
+                value,
+                null,
+                "");
+        if (resolved == null || resolved.isBlank()) {
+            send(sender, "&eWARNING &f" + definition.id() + ".provider." + type
+                    + "&7: sample native query did not resolve");
         }
     }
 
@@ -632,7 +671,7 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
     private void handleHolderEdit(CommandSender sender, LeaderboardDefinition definition, String[] args) {
         if (args.length < 4) {
             sendPrefixed(sender, "&cUsage: /leaderboards edit " + definition.id()
-                    + " holder <list|add|set|remove> ...");
+                    + " holder <list|add|set|remove|interval> ...");
             return;
         }
         String action = args[3].toLowerCase(Locale.ROOT);
@@ -650,7 +689,9 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                             + " &8| &7Color:&f " + page.color()
                             + " &8| &7Icon:&f " + page.icon()
                             + " &8| &7Format:&f " + page.valueFormat().name()
-                            + (page.hasSuffix() ? " &8| &7Suffix:&f " + page.suffix() : "");
+                            + (page.hasSuffix() ? " &8| &7Suffix:&f " + page.suffix() : "")
+                            + (LeaderboardPage.DEFAULT_INTERVAL.equals(page.interval()) ? ""
+                                    : " &8| &7Interval:&f " + page.interval());
                     send(sender, summary);
                 }
             }
@@ -693,9 +734,27 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                     return;
                 }
                 String suffix = args.length > 10 ? parseSuffix(args, 10) : pages.get(index).suffix();
-                pages.set(index, new LeaderboardPage(holderId, title, color, icon, format, "", suffix));
+                pages.set(index, new LeaderboardPage(holderId, title, color, icon, format, "", suffix,
+                        pages.get(index).interval()));
                 if (saveDefinition(sender, definition)) {
                     sendPrefixed(sender, "Updated holder &f#" + (index + 1) + " &7(&f" + holderId + "&7).");
+                }
+            }
+            case "interval" -> {
+                if (args.length < 6) {
+                    sendPrefixed(sender, "&cUsage: /leaderboards edit " + definition.id()
+                            + " holder interval <index> <interval>");
+                    return;
+                }
+                Integer index = parseIndex(sender, args[4], pages.size());
+                if (index == null) {
+                    return;
+                }
+                String interval = args[5].toLowerCase(Locale.ROOT);
+                pages.set(index, pages.get(index).withInterval(interval));
+                if (saveDefinition(sender, definition)) {
+                    sendPrefixed(sender, "Interval for holder &f#" + (index + 1) + " &7set to &f"
+                            + pages.get(index).interval() + "&7.");
                 }
             }
             case "remove" -> {
@@ -1083,7 +1142,8 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
     private void sendEditUsage(CommandSender sender, String label) {
         sendPrefixed(sender, "&fThunderLBs edit commands");
         sendHelpLine(sender, "/" + label + " edit", "<id> positions <amount>", "Change visible entries", false);
-        sendHelpLine(sender, "/" + label + " edit", "<id> holder add|set|remove|list ...", "Manage holders", false);
+        sendHelpLine(sender, "/" + label + " edit", "<id> holder add|set|remove|list|interval ...", "Manage holders",
+                false);
         sendHelpLine(sender, "/" + label + " edit", "<id> location [x y z (yaw)]", "Change the origin", false);
         sendHelpLine(sender, "/" + label + " edit", "<id> textshadow <true|false>", "Toggle text shadows", false);
         sendHelpLine(sender, "/" + label + " edit", "<id> bar <dots|bar|none> [useHolderColor]", "Configure the page bar", false);
@@ -1170,6 +1230,19 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                         return partial(args[3], HOLDER_ACTIONS);
                     }
                     String action = args[3].toLowerCase(Locale.ROOT);
+                    if (action.equals("interval")) {
+                        if (args.length == 5) {
+                            List<String> indexes = new ArrayList<>();
+                            for (int i = 1; i <= definition.pages().size(); i++) {
+                                indexes.add(String.valueOf(i));
+                            }
+                            return partial(args[4], indexes);
+                        }
+                        if (args.length == 6) {
+                            return partial(args[5], INTERVAL_SUGGESTIONS);
+                        }
+                        return Collections.emptyList();
+                    }
                     if (action.equals("set") || action.equals("remove")) {
                         if (definition.pages().isEmpty()) {
                             return Collections.emptyList();

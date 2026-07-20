@@ -51,8 +51,8 @@ public final class LeaderboardValidator {
             String path = "pages.page-" + (index + 1);
             if (page.holderId() == null || page.holderId().isBlank()) {
                 error(issues, path + ".holder", "must not be empty");
-            } else if (!holders.add(page.holderId().toLowerCase(Locale.ROOT))) {
-                warning(issues, path + ".holder", "duplicates an earlier holder");
+            } else if (!holders.add(page.holderId().toLowerCase(Locale.ROOT) + "|" + page.interval())) {
+                warning(issues, path + ".holder", "duplicates an earlier holder with the same interval");
             }
             if (page.title() == null || page.title().isBlank()) {
                 error(issues, path + ".title", "must not be empty");

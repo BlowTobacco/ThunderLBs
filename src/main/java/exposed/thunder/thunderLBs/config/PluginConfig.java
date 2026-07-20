@@ -14,8 +14,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 public final class PluginConfig {
+    private static final Set<String> NATIVE_PROVIDER_NAMES =
+            Set.of("topper", "ajleaderboards", "timedtopper");
+
     public enum RenderMode {
         PACKET,
         ENTITY;
@@ -45,6 +49,7 @@ public final class PluginConfig {
     private Formatting formatting;
     private Sounds sounds;
     private Animation animation;
+    private Performance performance;
     private Messages messages;
     private boolean debugPlaceholders;
 
@@ -63,8 +68,15 @@ public final class PluginConfig {
         this.renderMode = RenderMode.fromString(cfg.getString("render.mode", "packet"), RenderMode.PACKET);
         this.viewDistance = Math.max(4, cfg.getInt("render.view-distance", 48));
         this.providers = loadProviders(providersCfg);
-        this.providerName = cfg.getString("provider", "topper").toLowerCase(Locale.ROOT);
-        this.provider = providers.getOrDefault(providerName, Provider.topper());
+        String configuredProvider = Objects.toString(cfg.getString("provider", "topper"), "topper")
+                .toLowerCase(Locale.ROOT);
+        if (providers.containsKey(configuredProvider)) {
+            this.providerName = configuredProvider;
+        } else {
+            this.providerName = "topper";
+            plugin.getLogger().warning("Unknown provider '" + configuredProvider + "', falling back to topper.");
+        }
+        this.provider = providers.get(providerName);
         this.missingText = cfg.getString("missing-text", "---");
         this.missingPosition = Objects.toString(cfg.get("missing-position", "-1"), "-1");
         if (missingPosition.isBlank()) {
@@ -75,11 +87,9 @@ public final class PluginConfig {
         this.formatting = Formatting.from(cfg.getConfigurationSection("formatting"));
         this.sounds = Sounds.from(cfg.getConfigurationSection("sounds"));
         this.animation = Animation.from(cfg.getConfigurationSection("animation"));
+        this.performance = Performance.from(cfg.getConfigurationSection("performance"));
         this.messages = Messages.from(messagesCfg);
         this.debugPlaceholders = cfg.getBoolean("debug.placeholders", false);
-        if (!providers.containsKey(providerName)) {
-            plugin.getLogger().warning("Unknown provider '" + providerName + "', falling back to topper.");
-        }
     }
 
     private YamlConfiguration load(String name) {
@@ -88,8 +98,9 @@ public final class PluginConfig {
 
     private Map<String, Provider> loadProviders(ConfigurationSection section) {
         Map<String, Provider> loaded = new LinkedHashMap<>();
-        loaded.put("topper", Provider.topper());
-        loaded.put("ajleaderboards", Provider.ajLeaderboards());
+        loaded.put("topper", Provider.empty());
+        loaded.put("ajleaderboards", Provider.empty());
+        loaded.put("timedtopper", Provider.empty());
         if (section != null) {
             for (String key : section.getKeys(false)) {
                 ConfigurationSection providerSection = section.getConfigurationSection(key);
@@ -97,6 +108,9 @@ public final class PluginConfig {
                     continue;
                 }
                 String name = key.toLowerCase(Locale.ROOT);
+                if (NATIVE_PROVIDER_NAMES.contains(name)) {
+                    continue;
+                }
                 Provider base = loaded.getOrDefault(name, Provider.empty());
                 loaded.put(name, Provider.from(providerSection, base));
             }
@@ -148,6 +162,10 @@ public final class PluginConfig {
         return animation;
     }
 
+    public Performance performance() {
+        return performance;
+    }
+
     public Messages messages() {
         return messages;
     }
@@ -175,26 +193,17 @@ public final class PluginConfig {
             String groupViewerValue,
             String groupTeam) {
 
-        public static Provider topper() {
-            return new Provider(
-                    "%topper_%holder%;top_name;%position%%",
-                    "%topper_%holder%;top_value_raw;%position%%",
-                    "%topper_%holder%;top_rank%",
-                    "%topper_%holder%;value_raw%",
-                    "%grouptopper_%holder%;top_name;%position%%",
-                    "%grouptopper_%holder%;top_value_raw;%position%%",
-                    "%grouptopper_%holder%;top_rank%",
-                    "%grouptopper_%holder%;value_raw%",
-                    "%topper_team%");
-        }
-
-        public static Provider ajLeaderboards() {
-            return new Provider(
-                    "%ajlb_lb_%holder%_%position%_alltime_name%",
-                    "%ajlb_lb_%holder%_%position%_alltime_rawvalue%",
-                    "%ajlb_position_%holder%_alltime%",
-                    "%ajlb_value_%holder%_alltime_raw%",
-                    "", "", "", "", "");
+        public static String applyInterval(String pattern, String interval) {
+            if (pattern == null || pattern.isEmpty()) {
+                return pattern;
+            }
+            if (pattern.contains("%interval%")) {
+                return pattern.replace("%interval%", interval);
+            }
+            if (!"alltime".equals(interval) && pattern.contains("alltime")) {
+                return pattern.replace("alltime", interval);
+            }
+            return pattern;
         }
 
         public static Provider empty() {
@@ -276,10 +285,11 @@ public final class PluginConfig {
             String title,
             String row,
             String relative,
-            List<String> circledNumbers) {
+            List<String> circledNumbers,
+            Map<Integer, String> rankColors) {
         private static Formatting from(ConfigurationSection section) {
             if (section == null) {
-                return new Formatting(defaultTitle(), defaultRow(), defaultRow(), defaultCircled());
+                return new Formatting(defaultTitle(), defaultRow(), defaultRow(), defaultCircled(), Map.of());
             }
             List<String> circled = section.getStringList("circled-numbers");
             if (circled.isEmpty()) {
@@ -289,7 +299,29 @@ public final class PluginConfig {
                     section.getString("title", defaultTitle()),
                     section.getString("row", defaultRow()),
                     section.getString("relative", defaultRow()),
-                    Collections.unmodifiableList(circled));
+                    Collections.unmodifiableList(circled),
+                    loadRankColors(section.getConfigurationSection("rank-colors")));
+        }
+
+        private static Map<Integer, String> loadRankColors(ConfigurationSection section) {
+            if (section == null) {
+                return Map.of();
+            }
+            Map<Integer, String> colors = new LinkedHashMap<>();
+            for (String key : section.getKeys(false)) {
+                String color = section.getString(key);
+                if (color == null || color.isBlank()) {
+                    continue;
+                }
+                try {
+                    colors.put(Integer.parseInt(key.trim()), color.trim());
+                } catch (NumberFormatException ignored) {}
+            }
+            return Collections.unmodifiableMap(colors);
+        }
+
+        public String rankColor(int position, String fallback) {
+            return rankColors.getOrDefault(position, fallback);
         }
 
         private static String defaultTitle() {
@@ -323,6 +355,18 @@ public final class PluginConfig {
                         (float) section.getDouble("pitch-max", 2.0D),
                         section.getDouble("radius", 16.0D));
             }
+        }
+    }
+
+    public record Performance(long relativeRefreshTicks) {
+        private static final long DEFAULT_RELATIVE_REFRESH_TICKS = 40L;
+        private static final long MAX_REFRESH_TICKS = 20L * 60L * 60L;
+
+        static Performance from(ConfigurationSection section) {
+            long relativeRefreshTicks = section == null
+                    ? DEFAULT_RELATIVE_REFRESH_TICKS
+                    : section.getLong("relative-refresh-ticks", DEFAULT_RELATIVE_REFRESH_TICKS);
+            return new Performance(Math.max(1L, Math.min(MAX_REFRESH_TICKS, relativeRefreshTicks)));
         }
     }
 

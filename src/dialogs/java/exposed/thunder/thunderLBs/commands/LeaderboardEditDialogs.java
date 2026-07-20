@@ -436,15 +436,48 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
         LeaderboardPage page = adding
                 ? new LeaderboardPage("", "", "#FFFFFF", "*", ValueFormat.SHORT_NUMBER, "", "")
                 : definition.pages().get(index);
-        List<DialogInput> inputs = List.of(
-                textInput("holder", "Holder ID", page.holderId(), 128),
-                textInput("title", "Title", page.title(), 256),
-                textInput("color", "Color", page.color(), 64),
-                textInput("icon", "Icon", page.icon(), 64),
-                select("format", "Value format", enumOptions(ValueFormat.values(), page.valueFormat().name())),
-                textInput("prefix", "Value prefix (optional)", page.prefix(), 128),
-                textInput("suffix", "Value suffix (optional)", page.suffix(), 128)
-        );
+        String providerName = plugin.getPluginConfig().providerName();
+        boolean nativeProvider = plugin.getPlaceholderBridge().isNativeProvider(providerName);
+        List<String> holderChoices = nativeProvider
+                ? plugin.getPlaceholderBridge().holderChoices(providerName, definition.type())
+                : List.of();
+        List<String> intervalChoices = nativeProvider
+                ? plugin.getPlaceholderBridge().intervalChoices(providerName, definition.type())
+                : List.of();
+        boolean intervalUnavailable = nativeProvider && intervalChoices.isEmpty();
+        if (nativeProvider && adding && holderChoices.isEmpty()) {
+            error(player, "No registered holders were reported by " + providerName + " for "
+                    + definition.type().name().toLowerCase(Locale.ROOT) + " leaderboards.");
+            openHolders(player, id);
+            return;
+        }
+
+        List<DialogInput> inputs = new ArrayList<>();
+        inputs.add(nativeProvider
+                ? select("holder", "Holder ID", choiceOptions(holderChoices, page.holderId(), false))
+                : textInput("holder", "Holder ID", page.holderId(), 128));
+        inputs.add(textInput("title", "Title", page.title(), 256));
+        inputs.add(textInput("color", "Color", page.color(), 64));
+        inputs.add(textInput("icon", "Icon", page.icon(), 64));
+        inputs.add(select("format", "Value format", enumOptions(ValueFormat.values(), page.valueFormat().name())));
+        inputs.add(textInput("prefix", "Value prefix (optional)", page.prefix(), 128));
+        inputs.add(textInput("suffix", "Value suffix (optional)", page.suffix(), 128));
+        if (nativeProvider) {
+            if (intervalUnavailable) {
+                inputs.add(unavailableIntervalInput(
+                        page.interval(),
+                        plugin.getServer().getPluginManager().isPluginEnabled("Topper")
+                                ? "Use TimedTopper to set intervals!"
+                                : "No interval provider usable"));
+            } else {
+                inputs.add(select(
+                        "interval", "Interval", choiceOptions(intervalChoices, page.interval(), true)));
+            }
+        } else {
+            inputs.add(textInput(
+                    "interval", "Interval (e.g. alltime, daily, weekly)", page.interval(), 32));
+        }
+
         List<ActionButton> actions = new ArrayList<>();
         actions.add(button(adding ? "Add holder" : "Save holder",
                 adding
@@ -499,6 +532,15 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
             openHolders(player, id);
             return;
         }
+        String interval = text(response, "interval");
+        String providerName = plugin.getPluginConfig().providerName();
+        if (interval.isBlank()
+                && plugin.getPlaceholderBridge().isNativeProvider(providerName)
+                && plugin.getPlaceholderBridge().intervalChoices(providerName, definition.type()).isEmpty()) {
+            interval = adding
+                    ? LeaderboardPage.DEFAULT_INTERVAL
+                    : definition.pages().get(index).interval();
+        }
         LeaderboardPage replacement = new LeaderboardPage(
                 holder,
                 title,
@@ -506,7 +548,8 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
                 text(response, "icon"),
                 format,
                 text(response, "prefix"),
-                text(response, "suffix")
+                text(response, "suffix"),
+                interval
         );
         if (adding) {
             definition.pages().add(replacement);
@@ -677,7 +720,6 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
 
         for (LeaderboardPage page : definition.pages()) {
             summary.append(Component.newline())
-                    .append(Component.text("  ", NamedTextColor.DARK_GRAY))
                     .append(holderLabel(page));
         }
 
@@ -726,10 +768,45 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
                 .build();
     }
 
+    private DialogInput unavailableIntervalInput(String current, String message) {
+        String interval = current == null || current.isBlank() ? LeaderboardPage.DEFAULT_INTERVAL : current;
+        return DialogInput.singleOption(
+                        "interval",
+                        Component.text("Interval", ACCENT),
+                        List.of(SingleOptionDialogInput.OptionEntry.create(
+                                interval,
+                                Component.text(message, NamedTextColor.GRAY),
+                                true)))
+                .width(INPUT_WIDTH)
+                .build();
+    }
+
     private List<SingleOptionDialogInput.OptionEntry> enumOptions(Enum<?>[] values, String selected) {
         return Arrays.stream(values)
                 .map(value -> option(value.name().toLowerCase(Locale.ROOT), friendly(value.name()),
                         value.name().equalsIgnoreCase(selected)))
+                .toList();
+    }
+
+    private List<SingleOptionDialogInput.OptionEntry> choiceOptions(
+            List<String> choices,
+            String selected,
+            boolean friendlyLabels) {
+        List<String> values = new ArrayList<>(choices);
+        if (selected != null && !selected.isBlank()
+                && values.stream().noneMatch(value -> value.equalsIgnoreCase(selected))) {
+            values.add(0, selected);
+        }
+        if (values.isEmpty()) {
+            values.add("alltime");
+        }
+        String initial = values.stream()
+                .filter(value -> selected != null && value.equalsIgnoreCase(selected))
+                .findFirst()
+                .orElse(values.get(0));
+        return values.stream()
+                .map(value -> option(value, friendlyLabels ? friendly(value) : value,
+                        value.equalsIgnoreCase(initial)))
                 .toList();
     }
 
@@ -874,6 +951,9 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
 
     private static String friendly(String value) {
         String normalized = value.toLowerCase(Locale.ROOT).replace('_', ' ');
+        if (normalized.equals("alltime")) {
+            return "All time";
+        }
         return Character.toUpperCase(normalized.charAt(0)) + normalized.substring(1);
     }
 

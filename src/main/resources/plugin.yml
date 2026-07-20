@@ -9,6 +9,7 @@ softdepend:
   - PlaceholderAPI
   - Topper
   - GroupTopper
+  - TimedTopper
   - ajLeaderboards
   - packetevents
   - ViaVersion
