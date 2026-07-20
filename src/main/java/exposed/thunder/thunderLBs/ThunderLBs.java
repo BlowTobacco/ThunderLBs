@@ -25,9 +25,7 @@ import org.bukkit.command.PluginCommand;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.EventHandler;
-import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.Plugin;
@@ -46,11 +44,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class ThunderLBs extends JavaPlugin implements Listener {
     private static final int MINI_MESSAGE_CACHE_SIZE = 2048;
     private static final int BSTATS_PLUGIN_ID = 32620;
-    private static final Set<UUID> DEVELOPER_UUIDS = Set.of(
-            UUID.fromString("8555bccd-a421-38b0-807d-6445640759df"),
-            UUID.fromString("c735448a-701d-4152-bd37-a42b8b1acd00")
-    );
-
     private PluginConfig pluginConfig;
     private PlaceholderBridge placeholderBridge;
     private LeaderboardManager leaderboardManager;
@@ -96,19 +89,6 @@ public final class ThunderLBs extends JavaPlugin implements Listener {
                 "leaderboards command not defined in plugin.yml");
         pluginCommand.setExecutor(command);
         pluginCommand.setTabCompleter(command);
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR)
-    public void onDeveloperJoin(PlayerJoinEvent event) {
-        Player player = event.getPlayer();
-        if (DEVELOPER_UUIDS.contains(player.getUniqueId())) {
-            player.sendMessage(Component.text()
-                    .append(Component.text("ThunderLBs ", TextColor.color(0x38BDF8)))
-                    .append(Component.text("» ", NamedTextColor.DARK_GRAY))
-                    .append(Component.text("This server is running ThunderLBs ", NamedTextColor.GRAY))
-                    .append(Component.text(getPluginMeta().getVersion(), NamedTextColor.WHITE))
-                    .build());
-        }
     }
 
     private void logVersionSupport() {
