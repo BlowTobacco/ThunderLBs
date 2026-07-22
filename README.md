@@ -1,4 +1,9 @@
 # ThunderLBs
+
+This is a fork of [thunder-red-star/ThunderLBs](https://github.com/thunder-red-star/ThunderLBs) with one change:
+
+- Removed the hardcoded developer UUID join notification (`onDeveloperJoin`), which sent the plugin author a private message when he personally joined a server running the plugin. Everything else is untouched.
+
 Better docs soon
 
 ## License
