@@ -4,6 +4,9 @@ This is a fork of [thunder-red-star/ThunderLBs](https://github.com/thunder-red-s
 
 - Removed the hardcoded developer UUID join notification (`onDeveloperJoin`), which sent the plugin author a private message when he personally joined a server running the plugin. Everything else is untouched.
 
+This fork is 0% better for who uses this and maybe like 50% worse for thunder, his original purpose was to find out what popular servers use this plugin to add to his readme "server x uses this plugin with x players"
+No, the original or this is a backdoor, it's simply just so thunder doesn't know what servers use his plugin
+
 Better docs soon
 
 ## License
